@@ -14,7 +14,6 @@ jobs:
     env:
       ELECTRON_CACHE: ${{ github.workspace }}/.cache/electron
       ELECTRON_BUILDER_CACHE: ${{ github.workspace }}/.cache/electron-builder
-      # Skip code signing — without Apple certs the build would fail.
       CSC_IDENTITY_AUTO_DISCOVERY: false
     steps:
       - name: Checkout
@@ -33,7 +32,7 @@ jobs:
         run: npm run typecheck
 
       - name: Build macOS
-        run: npm run build:mac
+        run: npm run build:mac 2>&1 | tee build.log
 
       - name: Upload logs on failure
         if: failure()
@@ -41,7 +40,7 @@ jobs:
         with:
           name: macos-build-logs
           path: |
-            /Users/runner/.cache/electron-builder/**/*.log
+            build.log
             release/builder-debug.yml
 
       - name: Upload macOS assets
@@ -76,7 +75,7 @@ jobs:
         run: npm run typecheck
 
       - name: Build Windows
-        run: npm run build:win
+        run: npm run build:win 2>&1 | tee build.log
 
       - name: Upload logs on failure
         if: failure()
@@ -84,7 +83,7 @@ jobs:
         with:
           name: windows-build-logs
           path: |
-            ${{ github.workspace }}/.cache/electron-builder/**/*.log
+            build.log
             release/builder-debug.yml
 
       - name: Upload Windows assets
