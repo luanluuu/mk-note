@@ -11,6 +11,11 @@ permissions:
 jobs:
   release-macos:
     runs-on: macos-14
+    env:
+      ELECTRON_CACHE: ${{ github.workspace }}/.cache/electron
+      ELECTRON_BUILDER_CACHE: ${{ github.workspace }}/.cache/electron-builder
+      # Skip code signing — without Apple certs the build would fail.
+      CSC_IDENTITY_AUTO_DISCOVERY: false
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -18,19 +23,29 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
 
       - name: Install dependencies
         run: npm ci
 
+      - name: Type check
+        run: npm run typecheck
+
       - name: Build macOS
         run: npm run build:mac
-        env:
-          ELECTRON_CACHE: ${{ github.workspace }}/.cache/electron
-          ELECTRON_BUILDER_CACHE: ${{ github.workspace }}/.cache/electron-builder
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-build-logs
+          path: |
+            /Users/runner/.cache/electron-builder/**/*.log
+            release/builder-debug.yml
 
       - name: Upload macOS assets
+        if: success()
         uses: softprops/action-gh-release@v2
         with:
           files: |
@@ -41,6 +56,9 @@ jobs:
 
   release-windows:
     runs-on: windows-latest
+    env:
+      ELECTRON_CACHE: ${{ github.workspace }}/.cache/electron
+      ELECTRON_BUILDER_CACHE: ${{ github.workspace }}/.cache/electron-builder
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -48,19 +66,29 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
 
       - name: Install dependencies
         run: npm ci
 
+      - name: Type check
+        run: npm run typecheck
+
       - name: Build Windows
         run: npm run build:win
-        env:
-          ELECTRON_CACHE: ${{ github.workspace }}/.cache/electron
-          ELECTRON_BUILDER_CACHE: ${{ github.workspace }}/.cache/electron-builder
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-build-logs
+          path: |
+            ${{ github.workspace }}/.cache/electron-builder/**/*.log
+            release/builder-debug.yml
 
       - name: Upload Windows assets
+        if: success()
         uses: softprops/action-gh-release@v2
         with:
           files: release/*.exe
