@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- Background: warm off-white canvas -->
+  <rect width="1024" height="1024" fill="#F5F2EC"/>
+
+  <!-- Colored blocks (drawn first, grid lines on top) -->
+  <!-- Red block: top-left -->
+  <rect x="0" y="0" width="384" height="356" fill="#D7282F"/>
+  <!-- Blue block: bottom-left -->
+  <rect x="0" y="700" width="384" height="324" fill="#1C44E0"/>
+  <!-- Yellow block: bottom-right strip -->
+  <rect x="408" y="700" width="616" height="324" fill="#FFD500"/>
+
+  <!-- Grid lines: thick black, the signature Mondrian structure -->
+  <!-- Outer frame -->
+  <rect x="0" y="0" width="1024" height="1024" fill="none" stroke="#1A1A1A" stroke-width="24"/>
+  <!-- Vertical line dividing left third from right two-thirds -->
+  <rect x="384" y="0" width="24" height="1024" fill="#1A1A1A"/>
+  <!-- Horizontal line in left column (separates red from white) -->
+  <rect x="0" y="356" width="384" height="24" fill="#1A1A1A"/>
+  <!-- Horizontal line in left column (separates white from blue) -->
+  <rect x="0" y="700" width="384" height="24" fill="#1A1A1A"/>
+  <!-- Horizontal line in right column (separates white from yellow) -->
+  <rect x="408" y="700" width="616" height="24" fill="#1A1A1A"/>
+</svg>

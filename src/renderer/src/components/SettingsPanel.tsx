@@ -1,0 +1,239 @@
+import { useEffect, useState } from 'react'
+import type { AiConfig, AiProvider, AiStatus } from '../types'
+
+interface SettingsPanelProps {
+  isOpen: boolean
+  onClose: () => void
+}
+
+const PRESETS: Record<AiProvider, { baseUrl: string; model: string; label: string; hint: string; examples: string[] }> = {
+  ollama: {
+    baseUrl: 'http://localhost:11434',
+    model: 'qwen2.5:7b-instruct',
+    label: 'Ollama（本地）',
+    hint: '本地运行的 LLM，无需 API Key。先安装 ollama 并拉取模型。',
+    examples: ['qwen2.5:7b-instruct', 'llama3.1:8b', 'phi3:mini']
+  },
+  openai: {
+    baseUrl: 'https://api.openai.com',
+    model: 'gpt-4o-mini',
+    label: 'OpenAI 兼容 API',
+    hint: '支持 OpenAI、DeepSeek、Moonshot、Together 等兼容 /v1/chat/completions 的服务。Base URL 只填到域名即可，无需带 /v1。',
+    examples: ['gpt-4o-mini', 'deepseek-chat', 'deepseek-reasoner', 'moonshot-v1-8k']
+  }
+}
+
+const CONTEXT_PRESETS = [
+  { value: 8000, label: '8K（小模型）' },
+  { value: 32768, label: '32K（默认）' },
+  { value: 65536, label: '64K（长文本）' },
+  { value: 131072, label: '128K（超长上下文）' }
+]
+
+export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps): JSX.Element | null {
+  const [config, setConfig] = useState<AiConfig | null>(null)
+  const [testing, setTesting] = useState(false)
+  const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null)
+  const [models, setModels] = useState<string[]>([])
+  const [maxCtx, setMaxCtx] = useState<number>(32768)
+  const [ctxDirty, setCtxDirty] = useState(false)
+
+  useEffect(() => {
+    if (!isOpen) return
+    setTestResult(null)
+    setModels([])
+    setCtxDirty(false)
+    void window.api.getAiConfig().then((c) => setConfig(c))
+    void window.api.getMaxContextChars().then((v) => setMaxCtx(v))
+  }, [isOpen])
+
+  if (!isOpen || !config) return null
+
+  const update = (patch: Partial<AiConfig>): void => {
+    setConfig({ ...config, ...patch })
+    setTestResult(null)
+  }
+
+  const switchProvider = (provider: AiProvider): void => {
+    const preset = PRESETS[provider]
+    setConfig({ ...config, provider, baseUrl: preset.baseUrl, model: preset.model })
+    setTestResult(null)
+    setModels([])
+  }
+
+  const test = async (): Promise<void> => {
+    setTesting(true)
+    setTestResult(null)
+    try {
+      await window.api.setAiConfig(config)
+      const status: AiStatus = await window.api.aiStatus()
+      setModels(status.models)
+      if (status.available) {
+        setTestResult({ ok: true, message: `连接成功，共 ${status.models.length} 个模型可用` })
+      } else {
+        setTestResult({ ok: false, message: '无法连接，请检查地址和服务状态' })
+      }
+    } catch (err) {
+      setTestResult({ ok: false, message: err instanceof Error ? err.message : String(err) })
+    } finally {
+      setTesting(false)
+    }
+  }
+
+  const save = async (): Promise<void> => {
+    await window.api.setAiConfig(config)
+    if (ctxDirty) {
+      await window.api.setMaxContextChars(maxCtx)
+    }
+    onClose()
+  }
+
+  const preset = PRESETS[config.provider]
+
+  return (
+    <div className="settings-overlay" onClick={onClose}>
+      <div className="settings-panel" onClick={(e) => e.stopPropagation()}>
+        <div className="settings-panel__head">
+          <span className="settings-panel__title">设置</span>
+          <button className="settings-panel__close" onClick={onClose} aria-label="关闭">✕</button>
+        </div>
+
+        <div className="settings-panel__body">
+          <section className="settings-section">
+            <h3 className="settings-section__title">AI 服务</h3>
+
+            <div className="settings-field">
+              <label className="settings-field__label">服务类型</label>
+              <div className="settings-field__radios">
+                {(Object.keys(PRESETS) as AiProvider[]).map((p) => (
+                  <label key={p} className="settings-radio">
+                    <input
+                      type="radio"
+                      name="provider"
+                      checked={config.provider === p}
+                      onChange={() => switchProvider(p)}
+                    />
+                    <span>{PRESETS[p].label}</span>
+                  </label>
+                ))}
+              </div>
+              <p className="settings-field__hint">{preset.hint}</p>
+            </div>
+
+            <div className="settings-field">
+              <label className="settings-field__label">服务地址 (Base URL)</label>
+              <input
+                className="settings-input"
+                type="text"
+                value={config.baseUrl}
+                onChange={(e) => update({ baseUrl: e.target.value })}
+                placeholder={preset.baseUrl}
+              />
+              <p className="settings-field__hint">
+                只填到域名即可，例如 <code>https://api.deepseek.com</code>。
+                无需带 <code>/v1</code> 或 <code>/chat/completions</code>。
+              </p>
+            </div>
+
+            {config.provider === 'openai' && (
+              <div className="settings-field">
+                <label className="settings-field__label">API Key</label>
+                <input
+                  className="settings-input"
+                  type="password"
+                  value={config.apiKey}
+                  onChange={(e) => update({ apiKey: e.target.value })}
+                  placeholder="sk-..."
+                  autoComplete="off"
+                />
+                <p className="settings-field__hint">密钥仅保存在本地 settings.json，不会上传。</p>
+              </div>
+            )}
+
+            <div className="settings-field">
+              <label className="settings-field__label">模型</label>
+              <input
+                className="settings-input"
+                type="text"
+                value={config.model}
+                onChange={(e) => update({ model: e.target.value })}
+                placeholder={preset.model}
+              />
+              {models.length > 0 && (
+                <div className="settings-model-list">
+                  <span className="settings-model-list__label">服务端可用模型：</span>
+                  {models.map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      className={`settings-model-chip${config.model === m ? ' settings-model-chip--active' : ''}`}
+                      onClick={() => update({ model: m })}
+                    >
+                      {m}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <p className="settings-field__hint">
+                常用模型：
+                {preset.examples.map((m) => (
+                  <button
+                    key={m}
+                    type="button"
+                    className="settings-model-chip"
+                    onClick={() => update({ model: m })}
+                  >
+                    {m}
+                  </button>
+                ))}
+              </p>
+            </div>
+
+            <div className="settings-field">
+              <label className="settings-field__label">长上下文上限（字符数）</label>
+              <div className="settings-field__radios">
+                {CONTEXT_PRESETS.map((p) => (
+                  <label key={p.value} className="settings-radio">
+                    <input
+                      type="radio"
+                      name="maxCtx"
+                      checked={maxCtx === p.value}
+                      onChange={() => { setMaxCtx(p.value); setCtxDirty(true) }}
+                    />
+                    <span>{p.label}</span>
+                  </label>
+                ))}
+              </div>
+              <p className="settings-field__hint">
+                控制喂给模型的用户内容长度上限。标书等长文档建议 64K+；小本地模型（如 7B）建议 8K-32K 避免显存溢出。
+                长上下文模型（deepseek-v3、qwen2.5-128k、gpt-4o）可设到 128K 以分析整本标书。
+              </p>
+            </div>
+
+            <div className="settings-actions">
+              <button
+                className="settings-actions__btn"
+                onClick={() => void test()}
+                disabled={testing}
+              >
+                {testing ? '测试中…' : '测试连接'}
+              </button>
+              <button
+                className="settings-actions__btn settings-actions__btn--primary"
+                onClick={() => void save()}
+              >
+                保存
+              </button>
+            </div>
+
+            {testResult && (
+              <p className={`settings-test${testResult.ok ? ' settings-test--ok' : ' settings-test--fail'}`}>
+                {testResult.message}
+              </p>
+            )}
+          </section>
+        </div>
+      </div>
+    </div>
+  )
+}
