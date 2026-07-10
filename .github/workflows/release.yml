@@ -34,6 +34,14 @@ jobs:
       - name: Build macOS
         run: npm run build:mac 2>&1 | tee build.log
 
+      - name: Rename macOS assets for stable URLs
+        shell: bash
+        run: |
+          for f in release/*.dmg; do
+            [ -e "$f" ] && mv "$f" "release/Markdown-Notes.dmg"
+          done
+          ls -la release/
+
       - name: Upload logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
@@ -48,7 +56,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            release/*.dmg
+            release/Markdown-Notes.dmg
             release/*.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -77,6 +85,14 @@ jobs:
       - name: Build Windows
         run: npm run build:win 2>&1 | tee build.log
 
+      - name: Rename Windows installer for stable URLs
+        shell: bash
+        run: |
+          for f in release/*Setup*.exe; do
+            [ -e "$f" ] && mv "$f" "release/Markdown-Notes.exe"
+          done
+          ls -la release/
+
       - name: Upload logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
@@ -90,6 +106,6 @@ jobs:
         if: success()
         uses: softprops/action-gh-release@v2
         with:
-          files: release/*.exe
+          files: release/Markdown-Notes.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
