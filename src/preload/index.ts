@@ -163,6 +163,7 @@ const api = {
 
   // project context
   selectProject: (): Promise<string | null> => ipcRenderer.invoke('project:select'),
+  selectProjectFile: (): Promise<string | null> => ipcRenderer.invoke('project:selectFile'),
   getProject: (): Promise<string | null> => ipcRenderer.invoke('project:get'),
   clearProject: (): Promise<void> => ipcRenderer.invoke('project:clear'),
   scanProject: () => ipcRenderer.invoke('project:scan'),

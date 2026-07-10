@@ -124,6 +124,16 @@ export function EditorAiBar({ notePath, onApply, onActiveChange, projectContext,
     }
   }
 
+  const handleSelectProjectFile = async (): Promise<void> => {
+    setProjectMenuOpen(false)
+    const p = await window.api.selectProjectFile()
+    if (p) {
+      setProjectPath(p)
+      // Auto-summarize on first selection.
+      void runSummarize()
+    }
+  }
+
   const runSummarize = async (): Promise<void> => {
     setProjectMenuOpen(false)
     setProgress({ phase: 'scanning', current: 0, total: 0, file: '' })
@@ -170,32 +180,49 @@ export function EditorAiBar({ notePath, onApply, onActiveChange, projectContext,
           <button
             className="editor-toolbar__btn editor-toolbar__btn--project"
             onClick={() => projectPath && setProjectMenuOpen((v) => !v)}
-            disabled={!projectPath && !available}
-            title={projectPath ? `项目：${projectPath}` : '选择项目目录'}
+            disabled={!projectPath}
+            title={projectPath ? `参考资料：${projectPath}` : '选择项目目录或资料文件'}
           >
-            {busy ? '⏳' : '📁'} {projectName ?? '项目'}
+            {busy ? '⏳' : '📁'} {projectName ?? '资料'}
           </button>
           {!projectPath && (
-            <button
-              className="editor-toolbar__btn editor-toolbar__btn--select"
-              onClick={() => void handleSelectProject()}
-              title="选择项目目录"
-            >
-              选择
-            </button>
+            <>
+              <button
+                className="editor-toolbar__btn editor-toolbar__btn--select"
+                onClick={() => void handleSelectProject()}
+                title="选择项目目录"
+              >
+                目录
+              </button>
+              <button
+                className="editor-toolbar__btn editor-toolbar__btn--select"
+                onClick={() => void handleSelectProjectFile()}
+                title="选择 PDF / Word / Markdown / 代码文件"
+              >
+                文件
+              </button>
+            </>
           )}
           {projectMenuOpen && projectPath && (
             <div className="editor-toolbar__dropdown">
               <div className="editor-toolbar__dropdown-item editor-toolbar__dropdown-item--static">
                 <span className="editor-toolbar__dropdown-label" title={projectPath}>{projectName}</span>
               </div>
+              <button className="editor-toolbar__dropdown-item" onClick={() => void handleSelectProject()} disabled={busy}>
+                <span className="editor-toolbar__dropdown-icon">📁</span>
+                <span className="editor-toolbar__dropdown-label">更换目录</span>
+              </button>
+              <button className="editor-toolbar__dropdown-item" onClick={() => void handleSelectProjectFile()} disabled={busy}>
+                <span className="editor-toolbar__dropdown-icon">📄</span>
+                <span className="editor-toolbar__dropdown-label">更换文件</span>
+              </button>
               <button className="editor-toolbar__dropdown-item" onClick={() => void runSummarize()} disabled={busy}>
                 <span className="editor-toolbar__dropdown-icon">🔄</span>
                 <span className="editor-toolbar__dropdown-label">重新摘要</span>
               </button>
               <button className="editor-toolbar__dropdown-item" onClick={() => void handleClearProject()}>
                 <span className="editor-toolbar__dropdown-icon">✕</span>
-                <span className="editor-toolbar__dropdown-label">关闭项目</span>
+                <span className="editor-toolbar__dropdown-label">关闭资料</span>
               </button>
             </div>
           )}
@@ -207,7 +234,7 @@ export function EditorAiBar({ notePath, onApply, onActiveChange, projectContext,
             className={`editor-toolbar__btn editor-toolbar__btn--toggle${refOn ? ' is-on' : ''}`}
             onClick={() => void toggleReference()}
             disabled={busy}
-            title={refOn ? '参考项目：已开启' : '参考项目：已关闭'}
+            title={refOn ? '参考资料：已开启' : '参考资料：已关闭'}
           >
             🔗 参考{refOn ? ' ✓' : ''}
           </button>
@@ -254,7 +281,7 @@ export function EditorAiBar({ notePath, onApply, onActiveChange, projectContext,
       {progress && progress.phase !== 'done' && (
         <div className="project-progress">
           <div className="project-progress__label">
-            {progress.phase === 'scanning' ? '扫描项目文件…' : `摘要中 (${progress.current}/${progress.total || '?'})`}
+            {progress.phase === 'scanning' ? '扫描资料文件…' : `摘要中 (${progress.current}/${progress.total || '?'})`}
           </div>
           {progress.total > 0 && (
             <div className="project-progress__bar">

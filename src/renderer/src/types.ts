@@ -268,6 +268,7 @@ export interface Api {
 
   // project context
   selectProject: () => Promise<string | null>
+  selectProjectFile: () => Promise<string | null>
   getProject: () => Promise<string | null>
   clearProject: () => Promise<void>
   scanProject: () => Promise<ProjectScanResult>

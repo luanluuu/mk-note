@@ -806,8 +806,12 @@ const SOURCE_EXTS = new Set([
   '.rs', '.rb', '.php', '.c', '.cpp', '.cc', '.h', '.hpp', '.cs', '.swift',
   '.vue', '.svelte', '.astro', '.md', '.mdx', '.json', '.yaml', '.yml',
   '.toml', '.css', '.scss', '.sass', '.less', '.html', '.htm', '.sh', '.bash',
-  '.sql', '.graphql', '.gql', '.proto'
+  '.sql', '.graphql', '.gql', '.proto', '.txt', '.text', '.rtf', '.csv', '.tsv',
+  '.xml', '.ini', '.conf', '.properties', '.env', '.pdf', '.docx', '.docm'
 ])
+
+const DOCUMENT_EXTS = new Set(['.pdf', '.docx', '.docm'])
+const PROJECT_DIALOG_EXTENSIONS = Array.from(SOURCE_EXTS, (ext) => ext.slice(1))
 
 const MAX_PROJECT_FILES = 600
 // Files larger than this are summarized via structural sampling (extract
@@ -823,6 +827,7 @@ const MAX_FILE_CONTENT_CHARS = 4000
 // the summary prompt doesn't blow up. Raised to 12000 so big files (标书,
 // bundled code) get enough structural coverage.
 const MAX_SAMPLED_CHARS = 12000
+const MAX_DOCUMENT_TEXT_CHARS = 20000
 // Raised from 5 → 8: fewer serial round-trips → faster summarization.
 const SUMMARY_BATCH_SIZE = 8
 // How many batches to process in parallel. AI calls are I/O-bound (network
@@ -858,6 +863,54 @@ function sampleStructuralLines(src: string): string {
   return joined
 }
 
+function fileExt(pathOrName: string): string {
+  const idx = pathOrName.lastIndexOf('.')
+  return idx >= 0 ? pathOrName.slice(idx).toLowerCase() : ''
+}
+
+function isSupportedProjectFile(name: string): boolean {
+  return SOURCE_EXTS.has(fileExt(name)) && !IGNORED_FILE_RE.test(name)
+}
+
+async function persistProjectPath(projectPath: string): Promise<string> {
+  const settings = await readSettings()
+  settings.projectPath = resolve(projectPath)
+  await writeSettings(settings)
+  cachedScan = null
+  return settings.projectPath
+}
+
+async function extractPdfText(abs: string): Promise<string> {
+  const { PDFParse } = await import('pdf-parse')
+  const data = await fs.readFile(abs)
+  const parser = new PDFParse({ data })
+  try {
+    const result = await parser.getText()
+    return result.text || '(PDF 未提取到可读文本，可能是扫描件或加密文档)'
+  } finally {
+    await parser.destroy()
+  }
+}
+
+async function extractWordText(abs: string): Promise<string> {
+  const imported = await import('mammoth')
+  const mammoth = imported.default ?? imported
+  const result = await mammoth.extractRawText({ path: abs })
+  return result.value || '(Word 文档未提取到可读文本)'
+}
+
+async function extractDocumentText(abs: string): Promise<string> {
+  const ext = fileExt(abs)
+  try {
+    if (ext === '.pdf') return extractPdfText(abs)
+    if (ext === '.docx' || ext === '.docm') return extractWordText(abs)
+    return '(不支持的文档格式)'
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    return `(文档解析失败：${msg})`
+  }
+}
+
 /**
  * Read a file for summarization. For files under LARGE_FILE_BYTES, returns
  * the first MAX_FILE_CONTENT_CHARS chars. For larger files, returns sampled
@@ -865,6 +918,14 @@ function sampleStructuralLines(src: string): string {
  * missed — this is the fix for "重点都在大文件里" concern.
  */
 async function readFileForSummary(abs: string, size: number): Promise<string> {
+  const ext = fileExt(abs)
+  if (DOCUMENT_EXTS.has(ext)) {
+    const text = await extractDocumentText(abs)
+    return text.length > MAX_DOCUMENT_TEXT_CHARS
+      ? text.slice(0, MAX_DOCUMENT_TEXT_CHARS) + '\n…（文档较长，已截断）'
+      : text
+  }
+
   let content: string
   try {
     content = await fs.readFile(abs, 'utf-8')
@@ -939,6 +1000,27 @@ async function scanProject(rootDir: string): Promise<ProjectFile[]> {
   // on project:select (new path) and project:clear.
   if (cachedScan && cachedScan.path === rootDir) return cachedScan.files
 
+  try {
+    const stat = await fs.stat(rootDir)
+    if (stat.isFile()) {
+      if (!isSupportedProjectFile(rootDir)) {
+        cachedScan = { path: rootDir, files: [] }
+        return []
+      }
+      const file: ProjectFile = {
+        path: rootDir.split(/[\\/]/).pop() ?? rootDir,
+        abs: rootDir,
+        size: stat.size,
+        mtime: stat.mtimeMs
+      }
+      cachedScan = { path: rootDir, files: [file] }
+      return [file]
+    }
+  } catch {
+    cachedScan = { path: rootDir, files: [] }
+    return []
+  }
+
   const gitignore = await readGitignore(rootDir)
   const out: ProjectFile[] = []
 
@@ -958,12 +1040,10 @@ async function scanProject(rootDir: string): Promise<ProjectFile[]> {
         if (gitignoreMatch(relative(rootDir, full), gitignore)) continue
         await walk(full)
       } else if (entry.isFile()) {
-        const ext = entry.name.slice(entry.name.lastIndexOf('.')).toLowerCase()
-        if (!SOURCE_EXTS.has(ext)) continue
+        if (!isSupportedProjectFile(entry.name)) continue
         // Skip build artifacts, minified bundles, source maps, and lock files.
         // These are machine-generated, often huge, and carry no useful
         // structural information for prompt engineering.
-        if (IGNORED_FILE_RE.test(entry.name)) continue
         const rel = relative(rootDir, full).split(/[\\/]/).join('/')
         if (gitignoreMatch(rel, gitignore)) continue
         try {
@@ -1001,7 +1081,10 @@ async function summarizeProject(
     return !hit || hit.mtime !== f.mtime
   })
 
-  if (todo.length === 0) return cache
+  if (todo.length === 0) {
+    sender.send('project:progress', { phase: 'done', current: files.length, total: files.length, file: '' })
+    return cache
+  }
 
   // Adaptive batching by file size — gives the model more attention budget
   // per file for large files, keeps small files efficient in bigger batches.
@@ -2275,13 +2358,22 @@ function registerIpc(): void {
       properties: ['openDirectory']
     })
     if (result.canceled || result.filePaths.length === 0) return null
-    const projectPath = resolve(result.filePaths[0])
-    const settings = await readSettings()
-    settings.projectPath = projectPath
-    await writeSettings(settings)
-    // Invalidate the scan cache — new project, different file tree.
-    cachedScan = null
-    return projectPath
+    return persistProjectPath(result.filePaths[0])
+  })
+  ipcMain.handle('project:selectFile', async () => {
+    const result = await dialog.showOpenDialog({
+      title: '选择资料文件',
+      properties: ['openFile'],
+      filters: [
+        {
+          name: '支持的项目与资料文件',
+          extensions: PROJECT_DIALOG_EXTENSIONS
+        },
+        { name: '全部文件', extensions: ['*'] }
+      ]
+    })
+    if (result.canceled || result.filePaths.length === 0) return null
+    return persistProjectPath(result.filePaths[0])
   })
   ipcMain.handle('project:get', async () => {
     const settings = await readSettings()
