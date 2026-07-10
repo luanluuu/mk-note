@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { PromptStyle, AnalysisResult, Ambiguity, ClarificationAnswer } from '../types'
 import { hasSemanticChange } from '../lib/semanticDiff'
 
@@ -22,6 +22,8 @@ interface PromptPreviewPanelProps {
   onApply: (text: string) => void
   /** Called when user dismisses the panel. */
   onClose: () => void
+  /** Reports the floating panel's live viewport bounds for editor collision avoidance. */
+  onBoundsChange?: (rect: DOMRect | null) => void
   /** Optional project context string (null/undefined = reference off). */
   projectContext?: string | null
   /** Semantic search over the vault's embedding index. When provided,
@@ -159,7 +161,7 @@ function estimateTokens(text: string): number {
  * text appear immediately rather than waiting for the full response. Cancels
  * in-flight requests when new input arrives.
  */
-export function PromptPreviewPanel({ content, notePath, getCachedPrompt, onPromptCached, onApply, onClose, projectContext, ragSearch }: PromptPreviewPanelProps): JSX.Element {
+export function PromptPreviewPanel({ content, notePath, getCachedPrompt, onPromptCached, onApply, onClose, onBoundsChange, projectContext, ragSearch }: PromptPreviewPanelProps): JSX.Element {
   const [state, setState] = useState<State>({ kind: 'idle' })
   const [collapsed, setCollapsed] = useState(false)
   const [style, setStyle] = useState<PromptStyle>('detailed')
@@ -233,6 +235,33 @@ export function PromptPreviewPanel({ content, notePath, getCachedPrompt, onPromp
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null)
   const [dragging, setDragging] = useState(false)
   const dragInfoRef = useRef<{ startX: number; startY: number; origLeft: number; origTop: number } | null>(null)
+  const boundsFrameRef = useRef<number | null>(null)
+
+  const reportBounds = useCallback((): void => {
+    if (!onBoundsChange) return
+    if (boundsFrameRef.current !== null) cancelAnimationFrame(boundsFrameRef.current)
+    boundsFrameRef.current = requestAnimationFrame(() => {
+      boundsFrameRef.current = null
+      const panel = panelRef.current
+      onBoundsChange(panel ? panel.getBoundingClientRect() : null)
+    })
+  }, [onBoundsChange])
+
+  useEffect(() => {
+    if (!onBoundsChange) return
+    reportBounds()
+    const panel = panelRef.current
+    const resizeObserver = panel ? new ResizeObserver(reportBounds) : null
+    if (panel && resizeObserver) resizeObserver.observe(panel)
+    window.addEventListener('resize', reportBounds)
+    return (): void => {
+      if (boundsFrameRef.current !== null) cancelAnimationFrame(boundsFrameRef.current)
+      boundsFrameRef.current = null
+      resizeObserver?.disconnect()
+      window.removeEventListener('resize', reportBounds)
+      onBoundsChange(null)
+    }
+  }, [onBoundsChange, reportBounds])
 
   const onHeadMouseDown = (e: React.MouseEvent<HTMLDivElement>): void => {
     // Ignore drags starting on a button (collapse/close).
@@ -278,6 +307,7 @@ export function PromptPreviewPanel({ content, notePath, getCachedPrompt, onPromp
       panel.style.left = `${left}px`
       panel.style.top = `${top}px`
       panel.style.right = 'auto'
+      reportBounds()
     }
     const onUp = (): void => {
       // Commit the final position to React state.
@@ -286,6 +316,7 @@ export function PromptPreviewPanel({ content, notePath, getCachedPrompt, onPromp
         const left = parseFloat(panel.style.left) || 0
         const top = parseFloat(panel.style.top) || 0
         setPos({ left, top })
+        reportBounds()
       }
       setDragging(false)
     }

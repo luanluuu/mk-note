@@ -978,6 +978,7 @@ body {
   margin: 4px 0;
   font-size: 12px;
   line-height: 1.5;
+  min-width: 0;
 }
 .prompt-preview__card-row--highlight {
   padding: 4px 8px;
@@ -994,6 +995,8 @@ body {
 .prompt-preview__card-row > span:last-child {
   color: var(--ink);
   flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .prompt-preview__card-row--highlight > span:last-child {
   font-weight: 500;
@@ -1007,16 +1010,23 @@ body {
   flex-direction: column;
   gap: 4px;
   flex: 1;
+  min-width: 0;
 }
 .prompt-preview__card-file {
   display: flex;
   flex-direction: column;
   gap: 1px;
+  min-width: 0;
 }
 .prompt-preview__card-file code {
+  display: block;
+  max-width: 100%;
   font-size: 11px;
   color: var(--blue);
   font-family: 'SF Mono', 'Fira Code', monospace;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .prompt-preview__card--clarify .prompt-preview__card-file code {
   color: var(--black);
@@ -1024,6 +1034,7 @@ body {
 .prompt-preview__card-file-reason {
   font-size: 11px;
   color: var(--ink-faint);
+  overflow-wrap: anywhere;
 }
 .prompt-preview__card-list {
   margin: 0;
@@ -1897,6 +1908,15 @@ body {
   margin: 0 auto;
   padding: 48px 44px 150px;
   caret-color: var(--blue);
+}
+
+.editor-stage.has-preview-wrap .milkdown .ProseMirror::before {
+  content: '';
+  float: var(--preview-wrap-side, right);
+  width: var(--preview-wrap-width, 0px);
+  height: var(--preview-wrap-height, 0px);
+  margin-top: var(--preview-wrap-top, 0px);
+  pointer-events: none;
 }
 
 .milkdown .ProseMirror ::selection,

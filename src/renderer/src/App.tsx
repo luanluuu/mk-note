@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { CSSProperties } from 'react'
 import { Sidebar } from './components/Sidebar'
 import { MarkdownEditor } from './components/MarkdownEditor'
 import { EditorAiBar } from './components/EditorAiBar'
@@ -11,6 +12,36 @@ import { useAiMode } from './hooks/useAiMode'
 import { useEmbeddings } from './hooks/useEmbeddings'
 import type { PromptStyle } from './types'
 import { hasSemanticChange } from './lib/semanticDiff'
+
+interface PanelBounds {
+  left: number
+  right: number
+  top: number
+  bottom: number
+}
+
+interface TextWrapExclusion {
+  active: boolean
+  side: 'left' | 'right'
+  top: number
+  width: number
+  height: number
+}
+
+const PANEL_COLLISION_GAP = 24
+const MIN_EDITOR_LINE_WIDTH = 320
+
+function intersects(a: DOMRect, b: PanelBounds): boolean {
+  return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top
+}
+
+function inactiveTextWrap(): TextWrapExclusion {
+  return { active: false, side: 'right', top: 0, width: 0, height: 0 }
+}
+
+function clampTextWrapWidth(value: number, proseWidth: number): number {
+  return Math.max(0, Math.min(value, Math.max(0, proseWidth - MIN_EDITOR_LINE_WIDTH)))
+}
 
 function SettingsFabIcon(): JSX.Element {
   return (
@@ -31,6 +62,10 @@ export default function App(): JSX.Element {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [editorContent, setEditorContent] = useState('')
   const [previewOpen, setPreviewOpen] = useState(true)
+  const editorStageRef = useRef<HTMLDivElement>(null)
+  const [previewBounds, setPreviewBounds] = useState<PanelBounds | null>(null)
+  const [resizeTick, setResizeTick] = useState(0)
+  const [scrollTick, setScrollTick] = useState(0)
   // True while an EditorAiBar result panel is open — used to hide the
   // real-time PromptPreviewPanel so the two never compete for the same spot.
   const [aiActionActive, setAiActionActive] = useState(false)
@@ -45,6 +80,49 @@ export default function App(): JSX.Element {
   // key={activePath}). Re-entering a note whose content hasn't changed shows
   // the cached prompt instantly — no loading state, no AI round-trip.
   const promptCacheRef = useRef(new Map<string, { content: string; style: PromptStyle; ctx: string | null; prompt: string }>())
+
+  const textWrapExclusion = useMemo<TextWrapExclusion>(() => {
+    const stage = editorStageRef.current
+    const prose = stage?.querySelector('.ProseMirror') as HTMLElement | null
+    if (!stage || !prose || !previewBounds) return inactiveTextWrap()
+    const proseRect = prose.getBoundingClientRect()
+    if (!intersects(proseRect, previewBounds)) return inactiveTextWrap()
+
+    const panelCenter = (previewBounds.left + previewBounds.right) / 2
+    const proseCenter = (proseRect.left + proseRect.right) / 2
+    const side: TextWrapExclusion['side'] = panelCenter >= proseCenter ? 'right' : 'left'
+    const top = Math.max(0, previewBounds.top - proseRect.top - PANEL_COLLISION_GAP)
+    const bottom = Math.min(proseRect.bottom, previewBounds.bottom + PANEL_COLLISION_GAP)
+    const height = Math.max(0, bottom - proseRect.top - top)
+    if (height <= 0) return inactiveTextWrap()
+
+    const rawWidth = side === 'right'
+      ? proseRect.right - previewBounds.left + PANEL_COLLISION_GAP
+      : previewBounds.right - proseRect.left + PANEL_COLLISION_GAP
+
+    return {
+      active: true,
+      side,
+      top,
+      width: clampTextWrapWidth(rawWidth, proseRect.width),
+      height
+    }
+    // resizeTick and scrollTick intentionally force recalculation after viewport
+    // or editor scroll changes, because the ProseMirror rect is read from the DOM.
+  }, [previewBounds, resizeTick, scrollTick])
+
+  const editorStageStyle = useMemo(() => ({
+    '--preview-wrap-side': textWrapExclusion.side,
+    '--preview-wrap-top': `${textWrapExclusion.top}px`,
+    '--preview-wrap-width': `${textWrapExclusion.width}px`,
+    '--preview-wrap-height': `${textWrapExclusion.height}px`
+  }) as CSSProperties, [textWrapExclusion])
+
+  const handlePreviewBoundsChange = useCallback((rect: DOMRect | null): void => {
+    setPreviewBounds(rect
+      ? { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom }
+      : null)
+  }, [])
 
   const getCachedPrompt = useCallback(
     (path: string, content: string, style: PromptStyle, ctx: string | null): string | undefined => {
@@ -76,6 +154,39 @@ export default function App(): JSX.Element {
   useEffect(() => {
     if (aiMode) setPreviewOpen(true)
   }, [aiMode, activePath])
+
+  useEffect(() => {
+    const onResize = (): void => setResizeTick((tick) => tick + 1)
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
+
+  useEffect(() => {
+    if (!activePath) return
+    const stage = editorStageRef.current
+    if (!stage) return
+    let cleanup: (() => void) | null = null
+    let observer: MutationObserver | null = null
+    const attach = (): void => {
+      if (cleanup) return
+      const root = stage.querySelector('.milkdown-root')
+      if (!root) return
+      const onScroll = (): void => setScrollTick((tick) => tick + 1)
+      root.addEventListener('scroll', onScroll, { passive: true })
+      cleanup = () => root.removeEventListener('scroll', onScroll)
+      observer?.disconnect()
+      observer = null
+    }
+    attach()
+    if (!cleanup) {
+      observer = new MutationObserver(attach)
+      observer.observe(stage, { childList: true, subtree: true })
+    }
+    return () => {
+      cleanup?.()
+      observer?.disconnect()
+    }
+  }, [activePath])
 
   const handleCreate = async (): Promise<void> => {
     const note = await createNote('未命名')
@@ -156,7 +267,12 @@ export default function App(): JSX.Element {
       <main className="editor-pane">
         <section className="editor-glass">
           {activePath ? (
-            <div className="editor-stage" key={activePath}>
+            <div
+              className={`editor-stage${textWrapExclusion.active ? ' has-preview-wrap' : ''}`}
+              key={activePath}
+              ref={editorStageRef}
+              style={editorStageStyle}
+            >
               {aiMode && (
                 <EditorAiBar
                   notePath={activePath}
@@ -176,6 +292,7 @@ export default function App(): JSX.Element {
                   onPromptCached={onPromptCached}
                   onApply={(text) => applyToEditorRef.current?.(text)}
                   onClose={() => setPreviewOpen(false)}
+                  onBoundsChange={handlePreviewBoundsChange}
                   projectContext={projectContext}
                   ragSearch={embeddings.search}
                 />
