@@ -97,13 +97,23 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps): JSX.Elem
     void window.api.getAiConfig().then((c) => setConfig(c))
     void window.api.getMaxContextChars().then((v) => setMaxCtx(v))
     void window.api.getUpdateFeedUrl().then((url) => setUpdateFeedUrl(url))
+    void window.api.getAutoUpdateCheckResult().then((result) => {
+      if (result) setUpdateResult(result)
+    })
   }, [isOpen])
 
   useEffect(() => {
     if (!isOpen) return undefined
-    return window.api.onUpdateDownloadProgress((progress) => {
+    const unsubscribeDownload = window.api.onUpdateDownloadProgress((progress) => {
       setDownloadProgress(progress)
     })
+    const unsubscribeAutoCheck = window.api.onAutoUpdateCheckResult((result) => {
+      setUpdateResult((current) => current ?? result)
+    })
+    return () => {
+      unsubscribeDownload()
+      unsubscribeAutoCheck()
+    }
   }, [isOpen])
 
   if (!isOpen || !config) return null
@@ -399,7 +409,7 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps): JSX.Elem
                 placeholder="luanluuu/mk-note"
               />
               <p className="settings-field__hint">
-                默认使用本项目的 GitHub Release。也支持 GitHub 仓库地址、<code>owner/repo</code>，或 <code>https://api.github.com/repos/owner/repo/releases/latest</code>。
+                应用启动后会自动检测一次。默认使用本项目的 GitHub Release。也支持 GitHub 仓库地址、<code>owner/repo</code>，或 <code>https://api.github.com/repos/owner/repo/releases/latest</code>。
                 发布新版本时用 <code>v0.2.0</code> 这类 release tag。
               </p>
             </div>

@@ -88,6 +88,11 @@ let mainWindow: BrowserWindow | null = null
 let currentVault: string | null = null
 let nativeUpdaterConfigured = false
 let nativeUpdateReady = false
+let autoUpdateCheckTimer: ReturnType<typeof setTimeout> | null = null
+let lastAutoUpdateCheckResult: UpdateCheckResult | null = null
+let autoUpdateCheckStarted = false
+
+const AUTO_UPDATE_CHECK_DELAY_MS = 4500
 
 // ---------- settings persistence ----------
 
@@ -501,6 +506,35 @@ async function checkForUpdates(feedUrl?: string): Promise<UpdateCheckResult> {
       error: err instanceof Error ? err.message : String(err)
     }
   }
+}
+
+function emitAutoUpdateCheckResult(result: UpdateCheckResult): void {
+  mainWindow?.webContents.send('update:auto-check:result', result)
+}
+
+function scheduleAutoUpdateCheck(win: BrowserWindow): void {
+  if (autoUpdateCheckStarted) return
+  autoUpdateCheckStarted = true
+  if (autoUpdateCheckTimer) clearTimeout(autoUpdateCheckTimer)
+  autoUpdateCheckTimer = setTimeout(() => {
+    autoUpdateCheckTimer = null
+    if (win.isDestroyed()) return
+    void checkForUpdates()
+      .then((result) => {
+        lastAutoUpdateCheckResult = result
+        emitAutoUpdateCheckResult(result)
+      })
+      .catch((err) => {
+        const result: UpdateCheckResult = {
+          currentVersion: app.getVersion(),
+          latestVersion: null,
+          hasUpdate: false,
+          error: err instanceof Error ? err.message : String(err)
+        }
+        lastAutoUpdateCheckResult = result
+        emitAutoUpdateCheckResult(result)
+      })
+  }, AUTO_UPDATE_CHECK_DELAY_MS)
 }
 
 function sendUpdateDownloadProgress(sender: WebContents | undefined, progress: UpdateDownloadProgress): void {
@@ -2129,6 +2163,7 @@ function registerIpc(): void {
   ipcMain.handle('update:feed:get', async () => getUpdateFeedUrl())
   ipcMain.handle('update:feed:set', async (_event, updateFeedUrl: string) => setUpdateFeedUrl(updateFeedUrl))
   ipcMain.handle('update:check', async (_event, updateFeedUrl?: string) => checkForUpdates(updateFeedUrl))
+  ipcMain.handle('update:auto-check:get', async () => lastAutoUpdateCheckResult)
   ipcMain.handle('update:download', async (event, assetUrl: string, assetName: string) => downloadAndOpenUpdate(assetUrl, assetName, event.sender))
   ipcMain.handle('update:download-native', async (event) => downloadAndInstallNativeWindowsUpdate(event.sender))
   ipcMain.handle('update:open', async (_event, url: string) => {
@@ -2556,6 +2591,7 @@ async function createWindow(theme: Theme): Promise<void> {
 
   win.on('ready-to-show', () => {
     win.show()
+    scheduleAutoUpdateCheck(win)
   })
 
   win.on('closed', () => {

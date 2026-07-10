@@ -44,6 +44,20 @@ const api = {
     assetSize?: number
     error?: string
   }> => ipcRenderer.invoke('update:check', url),
+  getAutoUpdateCheckResult: (): Promise<{
+    currentVersion: string
+    latestVersion: string | null
+    hasUpdate: boolean
+    mode?: 'native' | 'manual'
+    releaseName?: string
+    releaseUrl?: string
+    publishedAt?: string
+    notes?: string
+    assetName?: string
+    assetUrl?: string
+    assetSize?: number
+    error?: string
+  } | null> => ipcRenderer.invoke('update:auto-check:get'),
   downloadUpdate: (assetUrl: string, assetName: string): Promise<{ filePath?: string; error?: string }> =>
     ipcRenderer.invoke('update:download', assetUrl, assetName),
   downloadNativeUpdate: (): Promise<{ mode?: 'native' | 'manual'; error?: string }> =>
@@ -62,6 +76,37 @@ const api = {
     }): void => cb(progress)
     ipcRenderer.on('update:download:progress', listener)
     return () => ipcRenderer.removeListener('update:download:progress', listener)
+  },
+  onAutoUpdateCheckResult: (cb: (result: {
+    currentVersion: string
+    latestVersion: string | null
+    hasUpdate: boolean
+    mode?: 'native' | 'manual'
+    releaseName?: string
+    releaseUrl?: string
+    publishedAt?: string
+    notes?: string
+    assetName?: string
+    assetUrl?: string
+    assetSize?: number
+    error?: string
+  }) => void): (() => void) => {
+    const listener = (_e: unknown, result: {
+      currentVersion: string
+      latestVersion: string | null
+      hasUpdate: boolean
+      mode?: 'native' | 'manual'
+      releaseName?: string
+      releaseUrl?: string
+      publishedAt?: string
+      notes?: string
+      assetName?: string
+      assetUrl?: string
+      assetSize?: number
+      error?: string
+    }): void => cb(result)
+    ipcRenderer.on('update:auto-check:result', listener)
+    return () => ipcRenderer.removeListener('update:auto-check:result', listener)
   },
   openUpdateUrl: (url: string): Promise<void> => ipcRenderer.invoke('update:open', url),
 

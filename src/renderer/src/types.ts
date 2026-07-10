@@ -208,9 +208,11 @@ export interface Api {
   getUpdateFeedUrl: () => Promise<string>
   setUpdateFeedUrl: (url: string) => Promise<string>
   checkForUpdates: (url?: string) => Promise<UpdateCheckResult>
+  getAutoUpdateCheckResult: () => Promise<UpdateCheckResult | null>
   downloadUpdate: (assetUrl: string, assetName: string) => Promise<UpdateDownloadResult>
   downloadNativeUpdate: () => Promise<UpdateDownloadResult>
   onUpdateDownloadProgress: (cb: (progress: UpdateDownloadProgress) => void) => () => void
+  onAutoUpdateCheckResult: (cb: (result: UpdateCheckResult) => void) => () => void
   openUpdateUrl: (url: string) => Promise<void>
 
   getAiConfig: () => Promise<AiConfig>
