@@ -10,9 +10,9 @@
     "build": "electron-vite build",
     "start": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "build:mac": "electron-vite build && electron-builder --mac",
-    "build:win": "electron-vite build && electron-builder --win",
-    "build:all": "electron-vite build && electron-builder --mac --win"
+    "build:mac": "electron-vite build && electron-builder --mac --publish=never",
+    "build:win": "electron-vite build && electron-builder --win --publish=never",
+    "build:all": "electron-vite build && electron-builder --mac --win --publish=never"
   },
   "dependencies": {
     "@milkdown/crepe": "^7.5.0",
