@@ -163,6 +163,7 @@ export interface UpdateCheckResult {
   currentVersion: string
   latestVersion: string | null
   hasUpdate: boolean
+  mode?: 'native' | 'manual'
   releaseName?: string
   releaseUrl?: string
   publishedAt?: string
@@ -175,6 +176,7 @@ export interface UpdateCheckResult {
 
 export interface UpdateDownloadResult {
   filePath?: string
+  mode?: 'native' | 'manual'
   error?: string
 }
 
@@ -207,6 +209,7 @@ export interface Api {
   setUpdateFeedUrl: (url: string) => Promise<string>
   checkForUpdates: (url?: string) => Promise<UpdateCheckResult>
   downloadUpdate: (assetUrl: string, assetName: string) => Promise<UpdateDownloadResult>
+  downloadNativeUpdate: () => Promise<UpdateDownloadResult>
   onUpdateDownloadProgress: (cb: (progress: UpdateDownloadProgress) => void) => () => void
   openUpdateUrl: (url: string) => Promise<void>
 

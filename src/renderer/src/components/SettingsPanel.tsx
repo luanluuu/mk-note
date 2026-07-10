@@ -171,19 +171,25 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps): JSX.Elem
   }
 
   const downloadUpdate = async (): Promise<void> => {
-    if (!updateResult?.assetUrl || !updateResult.assetName) return
+    if (!updateResult?.hasUpdate) return
+    const nativeUpdate = updateResult.mode === 'native'
+    if (!nativeUpdate && (!updateResult.assetUrl || !updateResult.assetName)) return
     setDownloadingUpdate(true)
     setDownloadResult(null)
     setDownloadProgress({
       phase: 'downloading',
       received: 0,
-      total: updateResult.assetSize ?? null,
-      percent: updateResult.assetSize ? 0 : null
+      total: nativeUpdate ? null : updateResult.assetSize ?? null,
+      percent: nativeUpdate ? null : updateResult.assetSize ? 0 : null
     })
     try {
-      const result = await window.api.downloadUpdate(updateResult.assetUrl, updateResult.assetName)
+      const result = nativeUpdate
+        ? await window.api.downloadNativeUpdate()
+        : await window.api.downloadUpdate(updateResult.assetUrl as string, updateResult.assetName as string)
       if (result.error) {
         setDownloadResult({ ok: false, message: `下载失败：${result.error}` })
+      } else if (nativeUpdate) {
+        setDownloadResult({ ok: true, message: '更新已下载，应用即将退出并静默安装。' })
       } else {
         setDownloadResult({ ok: true, message: '安装包已下载并打开，应用即将退出以便完成安装。' })
       }
@@ -406,7 +412,7 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps): JSX.Elem
               >
                 {checkingUpdate ? '检查中…' : '检查更新'}
               </button>
-              {updateResult?.hasUpdate && updateResult.assetUrl && updateResult.assetName && (
+              {updateResult?.hasUpdate && (updateResult.mode === 'native' || (updateResult.assetUrl && updateResult.assetName)) && (
                 <button
                   className="settings-actions__btn settings-actions__btn--primary"
                   onClick={() => void downloadUpdate()}
@@ -443,8 +449,12 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps): JSX.Elem
                     style={{ width: `${downloadProgress.percent ?? 35}%` }}
                   />
                 </div>
-                {downloadProgress.phase === 'opening' && (
-                  <div className="settings-update-progress__hint">安装包打开后，当前应用会自动退出，安装器即可替换应用文件。</div>
+                {(downloadProgress.phase === 'opening' || updateResult?.mode === 'native') && (
+                  <div className="settings-update-progress__hint">
+                    {updateResult?.mode === 'native'
+                      ? 'Windows 会优先使用差分包下载；下载完成后应用会退出并静默安装。'
+                      : '安装包打开后，当前应用会自动退出，安装器即可替换应用文件。'}
+                  </div>
                 )}
               </div>
             )}
@@ -461,7 +471,9 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps): JSX.Elem
                     </div>
                     <div className="settings-update-result__line">
                       {updateResult.hasUpdate
-                        ? (updateResult.assetName ? `发现新版本：${updateResult.assetName}` : '发现新版本，但没有找到适合当前系统的安装包。')
+                        ? (updateResult.mode === 'native'
+                          ? '发现新版本，可使用 Windows 差分更新安装。'
+                          : updateResult.assetName ? `发现新版本：${updateResult.assetName}` : '发现新版本，但没有找到适合当前系统的安装包。')
                         : '当前已经是最新版本。'}
                     </div>
                     {updateResult.releaseName && (

@@ -34,6 +34,7 @@ const api = {
     currentVersion: string
     latestVersion: string | null
     hasUpdate: boolean
+    mode?: 'native' | 'manual'
     releaseName?: string
     releaseUrl?: string
     publishedAt?: string
@@ -45,6 +46,8 @@ const api = {
   }> => ipcRenderer.invoke('update:check', url),
   downloadUpdate: (assetUrl: string, assetName: string): Promise<{ filePath?: string; error?: string }> =>
     ipcRenderer.invoke('update:download', assetUrl, assetName),
+  downloadNativeUpdate: (): Promise<{ mode?: 'native' | 'manual'; error?: string }> =>
+    ipcRenderer.invoke('update:download-native'),
   onUpdateDownloadProgress: (cb: (progress: {
     phase: 'downloading' | 'opening' | 'done'
     received: number

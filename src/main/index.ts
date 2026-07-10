@@ -1,6 +1,8 @@
 import { join, dirname, resolve, relative, isAbsolute } from 'node:path'
 import { promises as fs, watch, type FSWatcher } from 'node:fs'
 import { app, shell, BrowserWindow, ipcMain, dialog, Menu, type MenuItemConstructorOptions, type WebContents } from 'electron'
+import { autoUpdater } from 'electron-updater'
+import type { UpdateInfo } from 'builder-util-runtime'
 
 interface NoteMeta {
   path: string
@@ -44,6 +46,7 @@ interface UpdateCheckResult {
   currentVersion: string
   latestVersion: string | null
   hasUpdate: boolean
+  mode?: 'native' | 'manual'
   releaseName?: string
   releaseUrl?: string
   publishedAt?: string
@@ -62,6 +65,7 @@ interface ReleaseAsset {
 
 interface UpdateDownloadResult {
   filePath?: string
+  mode?: 'native' | 'manual'
   error?: string
 }
 
@@ -82,6 +86,8 @@ const DEFAULT_UPDATE_FEED_URL = 'luanluuu/mk-note'
 
 let mainWindow: BrowserWindow | null = null
 let currentVault: string | null = null
+let nativeUpdaterConfigured = false
+let nativeUpdateReady = false
 
 // ---------- settings persistence ----------
 
@@ -352,7 +358,91 @@ function safeDownloadName(name: string): string {
   return name.replace(/[\\/:*?"<>|]/g, '-').trim() || 'Markdown-Notes-update'
 }
 
+function isNativeWindowsUpdaterAvailable(): boolean {
+  return process.platform === 'win32' && app.isPackaged
+}
+
+function releaseNotesText(notes: UpdateInfo['releaseNotes']): string | undefined {
+  if (!notes) return undefined
+  if (typeof notes === 'string') return notes.slice(0, 1200)
+  return notes
+    .map((item) => [item.version, item.note].filter(Boolean).join('\n'))
+    .filter(Boolean)
+    .join('\n\n')
+    .slice(0, 1200) || undefined
+}
+
+function configureNativeUpdater(): void {
+  if (nativeUpdaterConfigured) return
+  nativeUpdaterConfigured = true
+  autoUpdater.autoDownload = false
+  autoUpdater.autoInstallOnAppQuit = false
+  autoUpdater.autoRunAppAfterInstall = true
+  autoUpdater.disableDifferentialDownload = false
+  autoUpdater.allowPrerelease = false
+  autoUpdater.logger = null
+
+  autoUpdater.on('download-progress', (progress) => {
+    sendUpdateDownloadProgress(mainWindow?.webContents, {
+      phase: 'downloading',
+      received: progress.transferred,
+      total: progress.total || null,
+      percent: Number.isFinite(progress.percent) ? Math.min(100, Math.round(progress.percent)) : null
+    })
+  })
+  autoUpdater.on('update-downloaded', () => {
+    nativeUpdateReady = true
+    sendUpdateDownloadProgress(mainWindow?.webContents, {
+      phase: 'done',
+      received: 1,
+      total: 1,
+      percent: 100
+    })
+  })
+}
+
+async function checkNativeWindowsUpdate(): Promise<UpdateCheckResult> {
+  const currentVersion = app.getVersion()
+  if (!isNativeWindowsUpdaterAvailable()) {
+    return {
+      currentVersion,
+      latestVersion: null,
+      hasUpdate: false,
+      mode: 'native',
+      error: 'NATIVE_UPDATER_UNAVAILABLE'
+    }
+  }
+
+  configureNativeUpdater()
+  nativeUpdateReady = false
+  try {
+    const result = await autoUpdater.checkForUpdates()
+    const info = result?.updateInfo
+    return {
+      currentVersion,
+      latestVersion: info?.version ?? null,
+      hasUpdate: !!info && compareVersions(info.version, currentVersion) > 0,
+      mode: 'native',
+      releaseName: info?.releaseName ?? undefined,
+      publishedAt: info?.releaseDate,
+      notes: releaseNotesText(info?.releaseNotes)
+    }
+  } catch (err) {
+    return {
+      currentVersion,
+      latestVersion: null,
+      hasUpdate: false,
+      mode: 'native',
+      error: err instanceof Error ? err.message : String(err)
+    }
+  }
+}
+
 async function checkForUpdates(feedUrl?: string): Promise<UpdateCheckResult> {
+  if (isNativeWindowsUpdaterAvailable()) {
+    return checkNativeWindowsUpdate()
+  }
+
   const currentVersion = app.getVersion()
   const apiUrl = githubApiUrl(feedUrl?.trim() || await getUpdateFeedUrl())
   if (!apiUrl) {
@@ -360,6 +450,7 @@ async function checkForUpdates(feedUrl?: string): Promise<UpdateCheckResult> {
       currentVersion,
       latestVersion: null,
       hasUpdate: false,
+      mode: 'manual',
       error: 'UPDATE_FEED_NOT_CONFIGURED'
     }
   }
@@ -374,6 +465,7 @@ async function checkForUpdates(feedUrl?: string): Promise<UpdateCheckResult> {
         currentVersion,
         latestVersion: null,
         hasUpdate: false,
+        mode: 'manual',
         error: `UPDATE_CHECK_FAILED (${res.status} ${res.statusText})`
       }
     }
@@ -391,6 +483,7 @@ async function checkForUpdates(feedUrl?: string): Promise<UpdateCheckResult> {
       currentVersion,
       latestVersion,
       hasUpdate: !!latestVersion && compareVersions(latestVersion, currentVersion) > 0,
+      mode: 'manual',
       releaseName: data.name,
       releaseUrl: data.html_url,
       publishedAt: data.published_at,
@@ -404,6 +497,7 @@ async function checkForUpdates(feedUrl?: string): Promise<UpdateCheckResult> {
       currentVersion,
       latestVersion: null,
       hasUpdate: false,
+      mode: 'manual',
       error: err instanceof Error ? err.message : String(err)
     }
   }
@@ -476,9 +570,38 @@ async function downloadAndOpenUpdate(assetUrl: string, assetName: string, sender
     setTimeout(() => {
       app.quit()
     }, 800)
-    return { filePath }
+    return { filePath, mode: 'manual' }
   } catch (err) {
     return { error: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+async function downloadAndInstallNativeWindowsUpdate(sender?: WebContents): Promise<UpdateDownloadResult> {
+  if (!isNativeWindowsUpdaterAvailable()) return { mode: 'native', error: 'NATIVE_UPDATER_UNAVAILABLE' }
+  configureNativeUpdater()
+  try {
+    sendUpdateDownloadProgress(sender, {
+      phase: 'downloading',
+      received: 0,
+      total: null,
+      percent: null
+    })
+    await autoUpdater.downloadUpdate()
+    if (!nativeUpdateReady) {
+      nativeUpdateReady = true
+      sendUpdateDownloadProgress(sender, {
+        phase: 'done',
+        received: 1,
+        total: 1,
+        percent: 100
+      })
+    }
+    setTimeout(() => {
+      autoUpdater.quitAndInstall(true, true)
+    }, 800)
+    return { mode: 'native' }
+  } catch (err) {
+    return { mode: 'native', error: err instanceof Error ? err.message : String(err) }
   }
 }
 
@@ -1924,6 +2047,7 @@ function registerIpc(): void {
   ipcMain.handle('update:feed:set', async (_event, updateFeedUrl: string) => setUpdateFeedUrl(updateFeedUrl))
   ipcMain.handle('update:check', async (_event, updateFeedUrl?: string) => checkForUpdates(updateFeedUrl))
   ipcMain.handle('update:download', async (event, assetUrl: string, assetName: string) => downloadAndOpenUpdate(assetUrl, assetName, event.sender))
+  ipcMain.handle('update:download-native', async (event) => downloadAndInstallNativeWindowsUpdate(event.sender))
   ipcMain.handle('update:open', async (_event, url: string) => {
     try {
       const parsed = new URL(url)

@@ -1,6 +1,6 @@
 {
   "name": "markdown-notes",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "A markdown-first note-taking desktop app",
   "main": "./out/main/index.js",
   "author": "",
@@ -19,6 +19,7 @@
     "@milkdown/crepe": "^7.5.0",
     "@milkdown/utils": "^7.5.0",
     "@xenova/transformers": "^2.17.2",
+    "electron-updater": "^6.8.9",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
@@ -36,6 +37,13 @@
   "build": {
     "appId": "com.markdownnotes.app",
     "productName": "Markdown Notes",
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "luanluuu",
+        "repo": "mk-note"
+      }
+    ],
     "directories": {
       "output": "release"
     },
@@ -51,6 +59,7 @@
       "category": "public.app-category.productivity"
     },
     "win": {
+      "artifactName": "Markdown-Notes.${ext}",
       "target": [
         { "target": "nsis", "arch": ["x64"] }
       ],
@@ -66,6 +75,7 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
+      "differentialPackage": true,
       "installerHeader": "build/installerHeader.bmp",
       "installerSidebar": "build/installerSidebar.bmp",
       "uninstallerSidebar": "build/uninstallerSidebar.bmp",
