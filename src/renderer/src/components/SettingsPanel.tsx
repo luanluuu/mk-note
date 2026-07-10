@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { AiConfig, AiProvider, AiStatus, UpdateCheckResult } from '../types'
+import type { AiConfig, AiProvider, AiStatus, UpdateCheckResult, UpdateDownloadProgress } from '../types'
 
 interface SettingsPanelProps {
   isOpen: boolean
@@ -64,6 +64,12 @@ function fuzzyScoreModel(model: string, query: string): number {
   return score
 }
 
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+}
+
 export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps): JSX.Element | null {
   const [config, setConfig] = useState<AiConfig | null>(null)
   const [testing, setTesting] = useState(false)
@@ -76,6 +82,7 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps): JSX.Elem
   const [downloadingUpdate, setDownloadingUpdate] = useState(false)
   const [updateResult, setUpdateResult] = useState<UpdateCheckResult | null>(null)
   const [downloadResult, setDownloadResult] = useState<{ ok: boolean; message: string } | null>(null)
+  const [downloadProgress, setDownloadProgress] = useState<UpdateDownloadProgress | null>(null)
   const [modelSearch, setModelSearch] = useState('')
 
   useEffect(() => {
@@ -86,9 +93,17 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps): JSX.Elem
     setCtxDirty(false)
     setUpdateResult(null)
     setDownloadResult(null)
+    setDownloadProgress(null)
     void window.api.getAiConfig().then((c) => setConfig(c))
     void window.api.getMaxContextChars().then((v) => setMaxCtx(v))
     void window.api.getUpdateFeedUrl().then((url) => setUpdateFeedUrl(url))
+  }, [isOpen])
+
+  useEffect(() => {
+    if (!isOpen) return undefined
+    return window.api.onUpdateDownloadProgress((progress) => {
+      setDownloadProgress(progress)
+    })
   }, [isOpen])
 
   if (!isOpen || !config) return null
@@ -142,6 +157,7 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps): JSX.Elem
       const result = await window.api.checkForUpdates(trimmed)
       setUpdateResult(result)
       setDownloadResult(null)
+      setDownloadProgress(null)
     } catch (err) {
       setUpdateResult({
         currentVersion: '',
@@ -158,12 +174,18 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps): JSX.Elem
     if (!updateResult?.assetUrl || !updateResult.assetName) return
     setDownloadingUpdate(true)
     setDownloadResult(null)
+    setDownloadProgress({
+      phase: 'downloading',
+      received: 0,
+      total: updateResult.assetSize ?? null,
+      percent: updateResult.assetSize ? 0 : null
+    })
     try {
       const result = await window.api.downloadUpdate(updateResult.assetUrl, updateResult.assetName)
       if (result.error) {
         setDownloadResult({ ok: false, message: `下载失败：${result.error}` })
       } else {
-        setDownloadResult({ ok: true, message: '安装包已下载并打开，请按安装器提示完成更新。' })
+        setDownloadResult({ ok: true, message: '安装包已下载并打开，应用即将退出以便完成安装。' })
       }
     } catch (err) {
       setDownloadResult({ ok: false, message: err instanceof Error ? err.message : String(err) })
@@ -181,6 +203,16 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps): JSX.Elem
       .sort((a, b) => b.score - a.score || a.model.localeCompare(b.model))
       .map((item) => item.model)
     : models
+  const downloadPercent = downloadProgress?.percent ?? null
+  const downloadProgressLabel = downloadProgress
+    ? downloadProgress.phase === 'opening'
+      ? '正在打开安装包…'
+      : downloadProgress.phase === 'done'
+        ? '安装包已打开'
+        : downloadPercent !== null
+          ? `下载中 ${downloadPercent}%`
+          : `下载中 ${formatBytes(downloadProgress.received)}`
+    : null
 
   return (
     <div className="settings-overlay" onClick={onClose}>
@@ -356,6 +388,7 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps): JSX.Elem
                   setUpdateFeedUrl(e.target.value)
                   setUpdateResult(null)
                   setDownloadResult(null)
+                  setDownloadProgress(null)
                 }}
                 placeholder="luanluuu/mk-note"
               />
@@ -379,7 +412,7 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps): JSX.Elem
                   onClick={() => void downloadUpdate()}
                   disabled={downloadingUpdate}
                 >
-                  {downloadingUpdate ? '下载中…' : '下载并安装'}
+                  {downloadingUpdate ? (downloadProgressLabel ?? '下载中…') : '下载并安装'}
                 </button>
               )}
               {updateResult?.releaseUrl && (!updateResult.hasUpdate || !updateResult.assetUrl) && (
@@ -391,6 +424,30 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps): JSX.Elem
                 </button>
               )}
             </div>
+
+            {downloadProgress && (
+              <div className="settings-update-progress" role="status" aria-live="polite">
+                <div className="settings-update-progress__meta">
+                  <span>{downloadProgressLabel}</span>
+                  <span>
+                    {downloadProgress.total
+                      ? `${formatBytes(downloadProgress.received)} / ${formatBytes(downloadProgress.total)}`
+                      : `${formatBytes(downloadProgress.received)} 已下载`}
+                  </span>
+                </div>
+                <div
+                  className={`settings-update-progress__bar${downloadProgress.percent === null ? ' settings-update-progress__bar--indeterminate' : ''}`}
+                >
+                  <div
+                    className="settings-update-progress__fill"
+                    style={{ width: `${downloadProgress.percent ?? 35}%` }}
+                  />
+                </div>
+                {downloadProgress.phase === 'opening' && (
+                  <div className="settings-update-progress__hint">安装包打开后，当前应用会自动退出，安装器即可替换应用文件。</div>
+                )}
+              </div>
+            )}
 
             {updateResult && (
               <div className={`settings-update-result${updateResult.hasUpdate ? ' settings-update-result--new' : ''}${updateResult.error ? ' settings-update-result--fail' : ''}`}>

@@ -45,6 +45,21 @@ const api = {
   }> => ipcRenderer.invoke('update:check', url),
   downloadUpdate: (assetUrl: string, assetName: string): Promise<{ filePath?: string; error?: string }> =>
     ipcRenderer.invoke('update:download', assetUrl, assetName),
+  onUpdateDownloadProgress: (cb: (progress: {
+    phase: 'downloading' | 'opening' | 'done'
+    received: number
+    total: number | null
+    percent: number | null
+  }) => void): (() => void) => {
+    const listener = (_e: unknown, progress: {
+      phase: 'downloading' | 'opening' | 'done'
+      received: number
+      total: number | null
+      percent: number | null
+    }): void => cb(progress)
+    ipcRenderer.on('update:download:progress', listener)
+    return () => ipcRenderer.removeListener('update:download:progress', listener)
+  },
   openUpdateUrl: (url: string): Promise<void> => ipcRenderer.invoke('update:open', url),
 
   // ai (configurable: Ollama or any OpenAI-compatible endpoint)

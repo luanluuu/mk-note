@@ -65,6 +65,13 @@ interface UpdateDownloadResult {
   error?: string
 }
 
+interface UpdateDownloadProgress {
+  phase: 'downloading' | 'opening' | 'done'
+  received: number
+  total: number | null
+  percent: number | null
+}
+
 const DEFAULT_AI_CONFIG: AiConfig = {
   provider: 'ollama',
   baseUrl: 'http://localhost:11434',
@@ -402,7 +409,11 @@ async function checkForUpdates(feedUrl?: string): Promise<UpdateCheckResult> {
   }
 }
 
-async function downloadAndOpenUpdate(assetUrl: string, assetName: string): Promise<UpdateDownloadResult> {
+function sendUpdateDownloadProgress(sender: WebContents | undefined, progress: UpdateDownloadProgress): void {
+  sender?.send('update:download:progress', progress)
+}
+
+async function downloadAndOpenUpdate(assetUrl: string, assetName: string, sender?: WebContents): Promise<UpdateDownloadResult> {
   try {
     const url = new URL(assetUrl)
     if (url.protocol !== 'http:' && url.protocol !== 'https:') {
@@ -410,18 +421,61 @@ async function downloadAndOpenUpdate(assetUrl: string, assetName: string): Promi
     }
     const res = await fetch(assetUrl, {
       headers: { 'User-Agent': 'Markdown-Notes' },
-      signal: AbortSignal.timeout(120000)
+      signal: AbortSignal.timeout(600000)
     })
     if (!res.ok) {
       return { error: `UPDATE_DOWNLOAD_FAILED (${res.status} ${res.statusText})` }
     }
+    if (!res.body) {
+      return { error: 'UPDATE_DOWNLOAD_STREAM_UNAVAILABLE' }
+    }
     const updatesDir = join(app.getPath('userData'), 'updates')
     await fs.mkdir(updatesDir, { recursive: true })
     const filePath = join(updatesDir, safeDownloadName(assetName))
-    const bytes = Buffer.from(await res.arrayBuffer())
-    await fs.writeFile(filePath, bytes)
+    const total = Number(res.headers.get('content-length')) || null
+    const reader = res.body.getReader()
+    const chunks: Buffer[] = []
+    let received = 0
+
+    sendUpdateDownloadProgress(sender, {
+      phase: 'downloading',
+      received,
+      total,
+      percent: total ? 0 : null
+    })
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      const chunk = Buffer.from(value)
+      chunks.push(chunk)
+      received += chunk.length
+      sendUpdateDownloadProgress(sender, {
+        phase: 'downloading',
+        received,
+        total,
+        percent: total ? Math.min(100, Math.round((received / total) * 100)) : null
+      })
+    }
+
+    await fs.writeFile(filePath, Buffer.concat(chunks))
+    sendUpdateDownloadProgress(sender, {
+      phase: 'opening',
+      received,
+      total,
+      percent: total ? 100 : null
+    })
     const openError = await shell.openPath(filePath)
     if (openError) return { filePath, error: openError }
+    sendUpdateDownloadProgress(sender, {
+      phase: 'done',
+      received,
+      total,
+      percent: total ? 100 : null
+    })
+    setTimeout(() => {
+      app.quit()
+    }, 800)
     return { filePath }
   } catch (err) {
     return { error: err instanceof Error ? err.message : String(err) }
@@ -1229,51 +1283,46 @@ async function aiChatAction(
 }
 
 const STRUCTURE_SYSTEM_PROMPT_BASE =
-  '你是一位世界顶级的提示词架构师，擅长通过深度追问和分析来理解用户的真实意图，并设计出能精准执行任务的提示词。\n\n' +
+  '你是一位世界顶级的提示词架构师，擅长把用户的原始想法转成可直接交给目标 AI 执行的任务说明。\n\n' +
   '## 核心职责\n' +
-  '当你接收到用户以大白话描述的需求时，你的目标是生成一个结构化的、高质量的提示词，该提示词能让其他 AI 完美地完成用户所描述的任务。你需要：\n' +
-  '- 首先，仔细解读用户话语背后的真实需求、目标和上下文，而不是只停留在文字表面\n' +
-  '- 然后，将需求拆解为明确的步骤和要素\n' +
-  '- 最后，输出一个包含意图解读和完整提示词的结构化结果\n\n' +
+  '当用户描述一个需求时，你的目标不是生成"提示词模板"，而是生成目标 AI 可以直接执行的任务书。你需要：\n' +
+  '- 识别目标 AI 的类型：编码助手、写作助手、分析助手、设计助手、业务文档助手等\n' +
+  '- 根据目标 AI 类型选择合适结构，不套用固定章节\n' +
+  '- 删除元指令、空泛背景、显而易见的受众说明和二次包装\n' +
+  '- 将用户素材吸收到任务、约束、文件、步骤、验收标准里，而不是保留"以下素材将作为输入"这类说明\n\n' +
   '## 输出格式\n' +
-  '你的输出必须包含两部分，用 --- 分隔：\n\n' +
-  '第一部分：意图解读（放在最前面，用引用块格式）\n' +
-  '> **意图解读**\n' +
-  '> （简要说明你对用户意图的解读过程：你捕捉到了什么潜在需求、做了哪些合理补全、哪些地方用户可能需要调整。2-4 句话即可。）\n\n' +
-  '---\n\n' +
-  '第二部分：生成的提示词（直接可用的 Markdown 格式，用 # 标题组织章节）\n\n' +
-  '## 可选章节（只保留与任务相关的，简单任务不要硬塞全部）\n' +
-  '# 背景（仅当需要上下文时：业务背景、技术栈、项目情况）\n' +
-  '# 角色（仅当需要特定身份时：如"你是资深 PHP 工程师"）\n' +
-  '# 任务（必填。复杂任务用编号步骤拆解）\n' +
-  '# 输入（仅当有明确输入数据时，用 ### 或代码块包裹说明数据结构）\n' +
-  '# 输出格式（仅当需要结构化输出时，优先用 JSON 代码块并给出字段说明）\n' +
-  '# 约束（仅当有限制条件时：字数、语言、边界情况、安全考量）\n' +
-  '# 受众（仅当输出面向特定群体时：如"面向技术评审"或"面向小白用户"）\n' +
-  '# 示例（仅当示例能显著提升效果时，给出 input → output 样例）\n\n' +
+  '直接输出 Markdown 任务书。不要输出意图解读，不要输出"以下是生成的提示词"，不要加```包裹整个输出。\n\n' +
+  '## 编码/工程类任务的推荐章节\n' +
+  '当用户目标是让 Cursor/Copilot/Claude Code/Codex 等 AI 编码助手开发、重构、修 bug、搭建项目、生成开发计划时，使用以下结构，并只保留有内容的章节：\n' +
+  '# 目标\n' +
+  '# 技术栈与架构决策\n' +
+  '# 文件与目录规划\n' +
+  '# 实施步骤\n' +
+  '# 关键代码骨架\n' +
+  '# 安全与边界条件\n' +
+  '# 验收标准\n\n' +
+  '编码/工程类任务禁止输出这些元章节：# 输入、# 输出格式、# 受众、# 示例。除非用户明确要求"写一个 prompt 生成器"或"输出一个模板"。\n\n' +
+  '## 非编码任务的可选章节\n' +
+  '普通写作、分析、业务文档任务可按需使用：# 背景、# 任务、# 资料、# 约束、# 输出要求、# 验收标准。仍然禁止无内容的空章节。\n\n' +
   '## 关键原则\n' +
-  '- **深度理解**：从用户叙述中提取核心意图，不只停留在文字表面。用户说"别太复杂"往往意味着他是新手，需要简洁可操作的结论而非专业模型\n' +
-  '- **避免简单化**：不要生成仅重复用户原话的提示词，而要将其转化为具体的、有上下文的目标。"写诗"需指定风格、主题、情感等约束\n' +
-  '- **区分用户意图和执行细节**：\n' +
-  '  · 用户意图（产品类型、目标受众、业务场景）——不能臆造\n' +
-  '  · 执行细节（输出格式、光照参数、技术参数、代码风格）——应主动基于常识/项目上下文/最佳实践给出合理默认值\n' +
-  '- **模糊处理原则**：\n' +
-  '  · 执行细节模糊时，主动补全合理默认值并标注"（可调整）"，不要留空白占位符\n' +
-  '  · 用户核心意图模糊且完全无法推断时，可用"（待补充：选项A / 选项B / 选项C）"形式给出 2-3 个具体选项让用户选\n' +
-  '  · 整个提示词中的待补充项不超过 2 处\n' +
-  '  · 在意图解读部分说明你做了哪些补全，提示用户哪些地方可以调整\n' +
-  '- **完整性**：最终产物应该是用户复制走就能直接用的完整提示词，而不是还需要填空的模板\n' +
+  '- **直接可执行**：最终内容应让目标 AI 立即开始执行任务，而不是继续生成另一份提示词\n' +
+  '- **去元信息**：不要保留"输入素材包括..."、"此提示词面向..."、"请生成一份..."这类生成过程说明。把这些信息转化为任务要求\n' +
+  '- **少而准**：每个章节都必须承载可执行信息。没有具体内容就删除该章节\n' +
+  '- **工程任务要落到文件和步骤**：涉及开发时，必须给出命令、文件路径、模块边界、核心接口、代码骨架、验收标准\n' +
+  '- **安全/约束前置**：安全、隐私、权限、错误处理、平台兼容性必须转成明确的实现约束\n' +
+  '- **不要空泛**：禁止只写"使用最佳实践"、"保持模块化"。必须说明如何模块化、哪些文件负责什么\n' +
+  '- **占位符克制**：除非确实需要外部材料，不要生成 {{资料}} 这类占位符；已有素材要直接融入任务\n' +
   '- 用中文输出，不要加```包裹整个输出'
 
 const STYLE_HINTS: Record<PromptStyle, string> = {
   concise:
     '\n\n风格要求：简洁。每个章节用一两句话，约束用短列表，不要长篇大论。整体控制在 200 字以内。',
   detailed:
-    '\n\n风格要求：详尽。每个章节充分展开，约束具体可执行，输出格式给出完整字段说明。',
+    '\n\n风格要求：详尽。展开到足够执行即可，优先给实施步骤、文件路径、接口和验收标准，不要增加元说明。',
   cot:
     '\n\n风格要求：思维链。在 # 任务 章节加入"请按以下步骤思考："并编号列出推理步骤，引导 AI 分步推理后再给结论。',
   fewshot:
-    '\n\n风格要求：少样本。在 # 示例 章节必须给出 2 个 input/output 示例，示例要具体且覆盖典型情况。'
+    '\n\n风格要求：少样本。只有非编码任务才给 input/output 示例；编码任务改为给数据流示例、调用序列或关键代码骨架。'
 }
 
 function buildStructurePrompt(style: PromptStyle, projectContext?: string): string {
@@ -1509,25 +1558,36 @@ function parseAnalysis(raw: string): AnalysisResult | null {
 // ---------------------------------------------------------------------------
 
 const GENERATION_SYSTEM_PROMPT =
-  '你是一位世界顶级的提示词架构师。基于前置分析结果和用户澄清，生成一个结构化的、高质量的提示词，该提示词能让其他 AI 完美地完成用户所描述的任务。\n\n' +
+  '你是一位世界顶级的提示词架构师。基于前置分析结果和用户澄清，生成目标 AI 可以直接执行的任务书。\n\n' +
   '## 生成原则\n' +
   '- **基于真实意图**：以分析中推断的真实意图（而非表面文字）为核心构建提示词\n' +
   '- **具体引用项目**：如果分析中有项目相关文件/API，在提示词中具体引用（写明文件路径、函数名、类型名）\n' +
   '- **执行细节补全**：执行细节（输出格式、技术参数、代码风格）应主动给出合理默认值并标注"（可调整）"，不留空白占位符\n' +
   '- **用户意图不臆造**：用户意图（产品类型、目标受众、业务场景）基于分析和澄清结果，不臆造\n' +
-  '- **完整性**：最终产物是用户复制走就能直接用的完整提示词\n' +
-  '- **利用检索资料**：如果前置分析结果里有 searchResults（联网检索到的专业资料），在生成时参考这些资料的术语/规范/最佳实践，让提示词更专业。不要在提示词里直接复制检索内容，而是吸收其专业性\n\n' +
+  '- **完整性**：最终产物是用户复制走就能直接给目标 AI 执行的完整任务书\n' +
+  '- **利用检索资料**：如果前置分析结果里有 searchResults，吸收其中的术语/规范/最佳实践，不要直接堆砌检索内容\n' +
+  '- **删除元包装**：不要输出"请生成一份提示词"、"以下素材将作为输入"、"此提示词的读者是..."这类元信息。把它们转化为任务目标、约束和验收标准\n' +
+  '- **无用章节剔除**：没有具体执行价值的章节必须删除。不要为了结构完整而硬塞章节\n\n' +
   '## 输出格式\n' +
-  '直接输出 Markdown 格式的提示词（用 # 标题组织章节）。不要输出意图解读/分析——分析已经在前面展示过了。不要加```包裹整个输出。\n\n' +
-  '## 可选章节（只保留与任务相关的）\n' +
-  '# 背景（仅当需要上下文时）\n' +
-  '# 角色（仅当需要特定身份时）\n' +
-  '# 任务（必填。复杂任务用编号步骤拆解）\n' +
-  '# 输入（仅当有明确输入数据时）\n' +
-  '# 输出格式（仅当需要结构化输出时）\n' +
-  '# 约束（仅当有限制条件时）\n' +
-  '# 受众（仅当输出面向特定群体时）\n' +
-  '# 示例（仅当示例能显著提升效果时）\n\n' +
+  '直接输出 Markdown。不要输出意图解读/分析，不要加```包裹整个输出。\n\n' +
+  '## 编码/工程类任务强制结构\n' +
+  '如果用户目标是让 Cursor/Copilot/Claude Code/Codex 等 AI 编码助手开发、重构、修 bug、搭建项目或生成开发任务，使用以下结构，并只保留有内容的章节：\n' +
+  '# 目标\n' +
+  '# 技术栈与架构决策\n' +
+  '# 文件与目录规划\n' +
+  '# 实施步骤\n' +
+  '# 关键代码骨架\n' +
+  '# 安全与边界条件\n' +
+  '# 验收标准\n\n' +
+  '编码/工程类任务禁止输出这些章节：# 输入、# 输出格式、# 受众、# 示例。例外：如果用户明确要求"写 prompt 模板"，才允许保留。\n\n' +
+  '## 非编码任务结构\n' +
+  '非编码任务可按需使用：# 背景、# 任务、# 资料、# 约束、# 输出要求、# 验收标准。不要输出空章节。\n\n' +
+  '## 编码任务质量要求\n' +
+  '- 必须给出可执行命令、文件路径、模块职责和实施顺序\n' +
+  '- 必须包含关键接口或代码骨架；代码块要能直接作为起点使用\n' +
+  '- 必须把安全、错误处理、平台兼容、测试验收写成明确条款\n' +
+  '- 不要把用户提供的材料写成"{{技术分析文档}}"这类占位输入；应直接提炼成技术决策和实施步骤\n' +
+  '- 如果用户要求数据流图，输出 Mermaid 图或伪代码序列，章节名用 # 数据流，不要用 # 示例\n\n' +
   '## 标书场景专项生成规则（当分析结果涉及招标/投标/标书/采购/响应文件时启用）\n' +
   '标书 prompt 的目标读者是另一个标书生成工具/AI，不是直接生成标书的人。生成的 prompt 必须让下游 AI 能产出专业标书：\n\n' +
   '- **结构对标评分项**：在 # 任务 章节必须明确"逐条对应招标文件的评分标准"，并给出对应表结构：| 评分项 | 分值 | 响应内容 | 证明材料 |\n' +
@@ -1863,7 +1923,7 @@ function registerIpc(): void {
   ipcMain.handle('update:feed:get', async () => getUpdateFeedUrl())
   ipcMain.handle('update:feed:set', async (_event, updateFeedUrl: string) => setUpdateFeedUrl(updateFeedUrl))
   ipcMain.handle('update:check', async (_event, updateFeedUrl?: string) => checkForUpdates(updateFeedUrl))
-  ipcMain.handle('update:download', async (_event, assetUrl: string, assetName: string) => downloadAndOpenUpdate(assetUrl, assetName))
+  ipcMain.handle('update:download', async (event, assetUrl: string, assetName: string) => downloadAndOpenUpdate(assetUrl, assetName, event.sender))
   ipcMain.handle('update:open', async (_event, url: string) => {
     try {
       const parsed = new URL(url)

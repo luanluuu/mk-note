@@ -178,6 +178,13 @@ export interface UpdateDownloadResult {
   error?: string
 }
 
+export interface UpdateDownloadProgress {
+  phase: 'downloading' | 'opening' | 'done'
+  received: number
+  total: number | null
+  percent: number | null
+}
+
 export interface Api {
   selectVault: () => Promise<string | null>
   getLastVault: () => Promise<string | null>
@@ -200,6 +207,7 @@ export interface Api {
   setUpdateFeedUrl: (url: string) => Promise<string>
   checkForUpdates: (url?: string) => Promise<UpdateCheckResult>
   downloadUpdate: (assetUrl: string, assetName: string) => Promise<UpdateDownloadResult>
+  onUpdateDownloadProgress: (cb: (progress: UpdateDownloadProgress) => void) => () => void
   openUpdateUrl: (url: string) => Promise<void>
 
   getAiConfig: () => Promise<AiConfig>

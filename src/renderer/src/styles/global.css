@@ -1684,6 +1684,50 @@ body {
   color: var(--danger);
   background: #f0c8c8;
 }
+.settings-update-progress {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 2px solid var(--black);
+  background: var(--surface);
+  font-size: 12px;
+}
+.settings-update-progress__meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--ink);
+  font-weight: 700;
+}
+.settings-update-progress__bar {
+  position: relative;
+  height: 10px;
+  margin-top: 8px;
+  overflow: hidden;
+  border: 2px solid var(--black);
+  background: var(--surface-2);
+}
+.settings-update-progress__fill {
+  height: 100%;
+  background: var(--blue);
+  transition: width 0.18s var(--ease);
+}
+.settings-update-progress__bar--indeterminate .settings-update-progress__fill {
+  width: 45% !important;
+  animation: update-progress-slide 1.2s linear infinite;
+}
+.settings-update-progress__hint {
+  margin-top: 8px;
+  color: var(--ink-dim);
+  line-height: 1.45;
+}
+@keyframes update-progress-slide {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(225%);
+  }
+}
 .settings-update-result {
   margin-top: 12px;
   padding: 10px 12px;
