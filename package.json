@@ -1,6 +1,6 @@
 {
   "name": "markdown-notes",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "A markdown-first note-taking desktop app",
   "main": "./out/main/index.js",
   "author": "",
@@ -55,7 +55,12 @@
     "npmRebuild": false,
     "mac": {
       "target": [
-        { "target": "dmg", "arch": ["arm64"] }
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        }
       ],
       "icon": "build/icon.icns",
       "category": "public.app-category.productivity"
@@ -63,14 +68,21 @@
     "win": {
       "artifactName": "Markdown-Notes.${ext}",
       "target": [
-        { "target": "nsis", "arch": ["x64"] }
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
       ],
       "icon": "build/icon.png",
       "extraFiles": [
         {
           "from": "node_modules/onnxruntime-node/bin/napi-v3/win32/${arch}/",
           "to": "resources/app.asar.unpacked/node_modules/onnxruntime-node/bin/napi-v3/win32/${arch}/",
-          "filter": ["*.dll"]
+          "filter": [
+            "*.dll"
+          ]
         }
       ]
     },
