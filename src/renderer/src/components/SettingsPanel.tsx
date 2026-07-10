@@ -39,7 +39,9 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps): JSX.Elem
   const [ctxDirty, setCtxDirty] = useState(false)
   const [updateFeedUrl, setUpdateFeedUrl] = useState('')
   const [checkingUpdate, setCheckingUpdate] = useState(false)
+  const [downloadingUpdate, setDownloadingUpdate] = useState(false)
   const [updateResult, setUpdateResult] = useState<UpdateCheckResult | null>(null)
+  const [downloadResult, setDownloadResult] = useState<{ ok: boolean; message: string } | null>(null)
   const [modelSearch, setModelSearch] = useState('')
 
   useEffect(() => {
@@ -49,6 +51,7 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps): JSX.Elem
     setModelSearch('')
     setCtxDirty(false)
     setUpdateResult(null)
+    setDownloadResult(null)
     void window.api.getAiConfig().then((c) => setConfig(c))
     void window.api.getMaxContextChars().then((v) => setMaxCtx(v))
     void window.api.getUpdateFeedUrl().then((url) => setUpdateFeedUrl(url))
@@ -104,6 +107,7 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps): JSX.Elem
       await window.api.setUpdateFeedUrl(trimmed)
       const result = await window.api.checkForUpdates(trimmed)
       setUpdateResult(result)
+      setDownloadResult(null)
     } catch (err) {
       setUpdateResult({
         currentVersion: '',
@@ -113,6 +117,24 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps): JSX.Elem
       })
     } finally {
       setCheckingUpdate(false)
+    }
+  }
+
+  const downloadUpdate = async (): Promise<void> => {
+    if (!updateResult?.assetUrl || !updateResult.assetName) return
+    setDownloadingUpdate(true)
+    setDownloadResult(null)
+    try {
+      const result = await window.api.downloadUpdate(updateResult.assetUrl, updateResult.assetName)
+      if (result.error) {
+        setDownloadResult({ ok: false, message: `下载失败：${result.error}` })
+      } else {
+        setDownloadResult({ ok: true, message: '安装包已下载并打开，请按安装器提示完成更新。' })
+      }
+    } catch (err) {
+      setDownloadResult({ ok: false, message: err instanceof Error ? err.message : String(err) })
+    } finally {
+      setDownloadingUpdate(false)
     }
   }
 
@@ -295,6 +317,7 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps): JSX.Elem
                 onChange={(e) => {
                   setUpdateFeedUrl(e.target.value)
                   setUpdateResult(null)
+                  setDownloadResult(null)
                 }}
                 placeholder="luanluuu/mk-note"
               />
@@ -308,13 +331,22 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps): JSX.Elem
               <button
                 className="settings-actions__btn"
                 onClick={() => void checkUpdate()}
-                disabled={checkingUpdate}
+                disabled={checkingUpdate || downloadingUpdate}
               >
                 {checkingUpdate ? '检查中…' : '检查更新'}
               </button>
-              {updateResult?.releaseUrl && (
+              {updateResult?.hasUpdate && updateResult.assetUrl && updateResult.assetName && (
                 <button
                   className="settings-actions__btn settings-actions__btn--primary"
+                  onClick={() => void downloadUpdate()}
+                  disabled={downloadingUpdate}
+                >
+                  {downloadingUpdate ? '下载中…' : '下载并安装'}
+                </button>
+              )}
+              {updateResult?.releaseUrl && (!updateResult.hasUpdate || !updateResult.assetUrl) && (
+                <button
+                  className="settings-actions__btn"
                   onClick={() => void window.api.openUpdateUrl(updateResult.releaseUrl as string)}
                 >
                   打开发布页
@@ -333,7 +365,9 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps): JSX.Elem
                       {updateResult.latestVersion && <> · 最新版本 <code>{updateResult.latestVersion}</code></>}
                     </div>
                     <div className="settings-update-result__line">
-                      {updateResult.hasUpdate ? '发现新版本，可以前往发布页下载。' : '当前已经是最新版本。'}
+                      {updateResult.hasUpdate
+                        ? (updateResult.assetName ? `发现新版本：${updateResult.assetName}` : '发现新版本，但没有找到适合当前系统的安装包。')
+                        : '当前已经是最新版本。'}
                     </div>
                     {updateResult.releaseName && (
                       <div className="settings-update-result__title">{updateResult.releaseName}</div>
@@ -344,6 +378,11 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps): JSX.Elem
                   </>
                 )}
               </div>
+            )}
+            {downloadResult && (
+              <p className={`settings-test${downloadResult.ok ? ' settings-test--ok' : ' settings-test--fail'}`}>
+                {downloadResult.message}
+              </p>
             )}
           </section>
         </div>

@@ -48,6 +48,20 @@ interface UpdateCheckResult {
   releaseUrl?: string
   publishedAt?: string
   notes?: string
+  assetName?: string
+  assetUrl?: string
+  assetSize?: number
+  error?: string
+}
+
+interface ReleaseAsset {
+  name: string
+  browser_download_url: string
+  size?: number
+}
+
+interface UpdateDownloadResult {
+  filePath?: string
   error?: string
 }
 
@@ -312,6 +326,25 @@ function githubApiUrl(input: string): string | null {
   return raw
 }
 
+function selectUpdateAsset(assets: ReleaseAsset[]): ReleaseAsset | null {
+  const names = assets.filter((asset) => asset.browser_download_url)
+  if (process.platform === 'darwin') {
+    return names.find((asset) => asset.name.toLowerCase().endsWith('.dmg')) ??
+      names.find((asset) => asset.name.toLowerCase().endsWith('.zip')) ??
+      null
+  }
+  if (process.platform === 'win32') {
+    return names.find((asset) => asset.name.toLowerCase().endsWith('.exe')) ??
+      names.find((asset) => asset.name.toLowerCase().endsWith('.msi')) ??
+      null
+  }
+  return names.find((asset) => /\.(appimage|deb|rpm)$/i.test(asset.name)) ?? null
+}
+
+function safeDownloadName(name: string): string {
+  return name.replace(/[\\/:*?"<>|]/g, '-').trim() || 'Markdown-Notes-update'
+}
+
 async function checkForUpdates(feedUrl?: string): Promise<UpdateCheckResult> {
   const currentVersion = app.getVersion()
   const apiUrl = githubApiUrl(feedUrl?.trim() || await getUpdateFeedUrl())
@@ -343,8 +376,10 @@ async function checkForUpdates(feedUrl?: string): Promise<UpdateCheckResult> {
       html_url?: string
       published_at?: string
       body?: string
+      assets?: ReleaseAsset[]
     }
     const latestVersion = data.tag_name ?? null
+    const asset = selectUpdateAsset(data.assets ?? [])
     return {
       currentVersion,
       latestVersion,
@@ -352,7 +387,10 @@ async function checkForUpdates(feedUrl?: string): Promise<UpdateCheckResult> {
       releaseName: data.name,
       releaseUrl: data.html_url,
       publishedAt: data.published_at,
-      notes: data.body ? data.body.slice(0, 1200) : undefined
+      notes: data.body ? data.body.slice(0, 1200) : undefined,
+      assetName: asset?.name,
+      assetUrl: asset?.browser_download_url,
+      assetSize: asset?.size
     }
   } catch (err) {
     return {
@@ -361,6 +399,32 @@ async function checkForUpdates(feedUrl?: string): Promise<UpdateCheckResult> {
       hasUpdate: false,
       error: err instanceof Error ? err.message : String(err)
     }
+  }
+}
+
+async function downloadAndOpenUpdate(assetUrl: string, assetName: string): Promise<UpdateDownloadResult> {
+  try {
+    const url = new URL(assetUrl)
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+      return { error: 'UPDATE_ASSET_URL_UNSUPPORTED' }
+    }
+    const res = await fetch(assetUrl, {
+      headers: { 'User-Agent': 'Markdown-Notes' },
+      signal: AbortSignal.timeout(120000)
+    })
+    if (!res.ok) {
+      return { error: `UPDATE_DOWNLOAD_FAILED (${res.status} ${res.statusText})` }
+    }
+    const updatesDir = join(app.getPath('userData'), 'updates')
+    await fs.mkdir(updatesDir, { recursive: true })
+    const filePath = join(updatesDir, safeDownloadName(assetName))
+    const bytes = Buffer.from(await res.arrayBuffer())
+    await fs.writeFile(filePath, bytes)
+    const openError = await shell.openPath(filePath)
+    if (openError) return { filePath, error: openError }
+    return { filePath }
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) }
   }
 }
 
@@ -1799,6 +1863,7 @@ function registerIpc(): void {
   ipcMain.handle('update:feed:get', async () => getUpdateFeedUrl())
   ipcMain.handle('update:feed:set', async (_event, updateFeedUrl: string) => setUpdateFeedUrl(updateFeedUrl))
   ipcMain.handle('update:check', async (_event, updateFeedUrl?: string) => checkForUpdates(updateFeedUrl))
+  ipcMain.handle('update:download', async (_event, assetUrl: string, assetName: string) => downloadAndOpenUpdate(assetUrl, assetName))
   ipcMain.handle('update:open', async (_event, url: string) => {
     try {
       const parsed = new URL(url)

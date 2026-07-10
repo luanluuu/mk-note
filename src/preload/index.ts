@@ -38,8 +38,13 @@ const api = {
     releaseUrl?: string
     publishedAt?: string
     notes?: string
+    assetName?: string
+    assetUrl?: string
+    assetSize?: number
     error?: string
   }> => ipcRenderer.invoke('update:check', url),
+  downloadUpdate: (assetUrl: string, assetName: string): Promise<{ filePath?: string; error?: string }> =>
+    ipcRenderer.invoke('update:download', assetUrl, assetName),
   openUpdateUrl: (url: string): Promise<void> => ipcRenderer.invoke('update:open', url),
 
   // ai (configurable: Ollama or any OpenAI-compatible endpoint)

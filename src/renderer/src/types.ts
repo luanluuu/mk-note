@@ -167,6 +167,14 @@ export interface UpdateCheckResult {
   releaseUrl?: string
   publishedAt?: string
   notes?: string
+  assetName?: string
+  assetUrl?: string
+  assetSize?: number
+  error?: string
+}
+
+export interface UpdateDownloadResult {
+  filePath?: string
   error?: string
 }
 
@@ -191,6 +199,7 @@ export interface Api {
   getUpdateFeedUrl: () => Promise<string>
   setUpdateFeedUrl: (url: string) => Promise<string>
   checkForUpdates: (url?: string) => Promise<UpdateCheckResult>
+  downloadUpdate: (assetUrl: string, assetName: string) => Promise<UpdateDownloadResult>
   openUpdateUrl: (url: string) => Promise<void>
 
   getAiConfig: () => Promise<AiConfig>
