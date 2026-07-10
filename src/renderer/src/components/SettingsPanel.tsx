@@ -30,6 +30,40 @@ const CONTEXT_PRESETS = [
   { value: 131072, label: '128K（超长上下文）' }
 ]
 
+function fuzzyScoreModel(model: string, query: string): number {
+  const target = model.toLowerCase()
+  const normalizedQuery = query.trim().toLowerCase()
+  if (!normalizedQuery) return 1
+  if (target === normalizedQuery) return 1000
+  if (target.includes(normalizedQuery)) return 800 - target.indexOf(normalizedQuery)
+
+  const tokens = normalizedQuery.split(/[\s:/_.-]+/).filter(Boolean)
+  if (tokens.length === 0) return 1
+
+  let score = 0
+  for (const token of tokens) {
+    const idx = target.indexOf(token)
+    if (idx >= 0) {
+      score += 120 - idx
+      continue
+    }
+    let cursor = 0
+    let tokenScore = 0
+    for (const ch of token) {
+      const found = target.indexOf(ch, cursor)
+      if (found < 0) {
+        tokenScore = 0
+        break
+      }
+      tokenScore += Math.max(1, 18 - (found - cursor))
+      cursor = found + 1
+    }
+    if (tokenScore === 0) return 0
+    score += tokenScore
+  }
+  return score
+}
+
 export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps): JSX.Element | null {
   const [config, setConfig] = useState<AiConfig | null>(null)
   const [testing, setTesting] = useState(false)
@@ -141,7 +175,11 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps): JSX.Elem
   const preset = PRESETS[config.provider]
   const modelQuery = modelSearch.trim().toLowerCase()
   const filteredModels = modelQuery
-    ? models.filter((m) => m.toLowerCase().includes(modelQuery))
+    ? models
+      .map((model) => ({ model, score: fuzzyScoreModel(model, modelQuery) }))
+      .filter((item) => item.score > 0)
+      .sort((a, b) => b.score - a.score || a.model.localeCompare(b.model))
+      .map((item) => item.model)
     : models
 
   return (
