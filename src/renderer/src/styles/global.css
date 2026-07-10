@@ -1490,6 +1490,11 @@ body {
   margin: 0 0 14px;
   color: var(--ink);
 }
+.settings-section--split {
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 4px solid var(--black);
+}
 
 .settings-field {
   margin-bottom: 16px;
@@ -1582,6 +1587,9 @@ body {
   gap: 0;
   margin-top: 20px;
 }
+.settings-actions--compact {
+  margin-top: 12px;
+}
 .settings-actions__btn {
   flex: 1;
   padding: 9px 14px;
@@ -1624,6 +1632,48 @@ body {
 .settings-test--fail {
   color: var(--danger);
   background: #f0c8c8;
+}
+.settings-update-result {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 2px solid var(--black);
+  background: var(--surface-2);
+  color: var(--ink-dim);
+  font-size: 12px;
+  line-height: 1.55;
+}
+.settings-update-result--new {
+  background: #c8e8c0;
+  color: var(--black);
+}
+.settings-update-result--fail {
+  background: #f0c8c8;
+  color: var(--danger);
+}
+.settings-update-result__line + .settings-update-result__line {
+  margin-top: 4px;
+}
+.settings-update-result__line code {
+  font-family: 'SF Mono', ui-monospace, monospace;
+  font-size: 11px;
+}
+.settings-update-result__title {
+  margin-top: 8px;
+  font-weight: 700;
+  color: var(--ink);
+}
+.settings-update-result__notes {
+  max-height: 160px;
+  overflow: auto;
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border: 2px solid var(--black);
+  background: var(--surface);
+  color: var(--ink-dim);
+  white-space: pre-wrap;
+  font-family: 'SF Mono', ui-monospace, monospace;
+  font-size: 11px;
+  line-height: 1.45;
 }
 
 .milkdown-root {

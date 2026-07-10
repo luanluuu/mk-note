@@ -184,6 +184,7 @@ export function PromptPreviewPanel({ content, notePath, getCachedPrompt, onPromp
   const lastStyleRef = useRef<PromptStyle>('detailed')
   // Cancel function for the currently in-flight stream (if any).
   const cancelRef = useRef<(() => void) | null>(null)
+  const analyzeCancelRef = useRef<(() => void) | null>(null)
   // Set true when the user manually clicks "重新生成" / "开始生成". While
   // true, the auto-run useEffect skips its cache-hit and skip-duplicate
   // short-circuits so they don't clobber the manual regeneration. Cleared
@@ -351,6 +352,8 @@ export function PromptPreviewPanel({ content, notePath, getCachedPrompt, onPromp
   // Cancel any in-flight stream + clear analysis timers on unmount.
   useEffect(() => {
     return (): void => {
+      analyzeCancelRef.current?.()
+      analyzeCancelRef.current = null
       cancelRef.current?.()
       cancelRef.current = null
       if (analyzeStageTimerRef.current) clearInterval(analyzeStageTimerRef.current)
@@ -430,11 +433,18 @@ export function PromptPreviewPanel({ content, notePath, getCachedPrompt, onPromp
   }
 
   const analyze = async (text: string, seq: number, ctx: string | null, st: PromptStyle): Promise<void> => {
+    analyzeCancelRef.current?.()
+    const reqId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    const cancelAnalyze = (): void => {
+      void window.api.aiCancelAnalyze(reqId)
+    }
+    analyzeCancelRef.current = cancelAnalyze
     startAnalyzeTimers()
     try {
       const ragCtx = await buildRagContext(text)
       ragContextRef.current = ragCtx
-      const result = await window.api.aiAnalyze(text, ctx ?? undefined, ragCtx || undefined)
+      const result = await window.api.aiAnalyze(text, ctx ?? undefined, ragCtx || undefined, reqId)
+      if (analyzeCancelRef.current === cancelAnalyze) analyzeCancelRef.current = null
       clearAnalyzeTimers()
       if (seqRef.current !== seq) return
       if (!result) {
@@ -454,6 +464,7 @@ export function PromptPreviewPanel({ content, notePath, getCachedPrompt, onPromp
         run(text, seq, ctx, st, false, result, [])
       }
     } catch (err) {
+      if (analyzeCancelRef.current === cancelAnalyze) analyzeCancelRef.current = null
       clearAnalyzeTimers()
       if (seqRef.current !== seq) return
       const msg = err instanceof Error ? err.message : String(err)
@@ -466,6 +477,8 @@ export function PromptPreviewPanel({ content, notePath, getCachedPrompt, onPromp
   // the user clicks "跳过分析" after the slow timer fires, or as an escape
   // hatch if analysis is taking too long.
   const skipAnalysis = (): void => {
+    analyzeCancelRef.current?.()
+    analyzeCancelRef.current = null
     clearAnalyzeTimers()
     const mySeq = ++seqRef.current
     const ctx = projectContext ?? null
@@ -489,6 +502,8 @@ export function PromptPreviewPanel({ content, notePath, getCachedPrompt, onPromp
     answers: ClarificationAnswer[] = [],
     feedback?: string
   ): void => {
+    analyzeCancelRef.current?.()
+    analyzeCancelRef.current = null
     cancelRef.current?.()
     cancelRef.current = null
 
@@ -639,6 +654,8 @@ export function PromptPreviewPanel({ content, notePath, getCachedPrompt, onPromp
     // Enter manual mode: show "开始生成" instead of auto-previewing.
     setApplied(true)
     setState({ kind: 'idle' })
+    analyzeCancelRef.current?.()
+    analyzeCancelRef.current = null
     cancelRef.current?.()
     cancelRef.current = null
   }

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { AiConfig, AiProvider, AiStatus } from '../types'
+import type { AiConfig, AiProvider, AiStatus, UpdateCheckResult } from '../types'
 
 interface SettingsPanelProps {
   isOpen: boolean
@@ -37,14 +37,19 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps): JSX.Elem
   const [models, setModels] = useState<string[]>([])
   const [maxCtx, setMaxCtx] = useState<number>(32768)
   const [ctxDirty, setCtxDirty] = useState(false)
+  const [updateFeedUrl, setUpdateFeedUrl] = useState('')
+  const [checkingUpdate, setCheckingUpdate] = useState(false)
+  const [updateResult, setUpdateResult] = useState<UpdateCheckResult | null>(null)
 
   useEffect(() => {
     if (!isOpen) return
     setTestResult(null)
     setModels([])
     setCtxDirty(false)
+    setUpdateResult(null)
     void window.api.getAiConfig().then((c) => setConfig(c))
     void window.api.getMaxContextChars().then((v) => setMaxCtx(v))
+    void window.api.getUpdateFeedUrl().then((url) => setUpdateFeedUrl(url))
   }, [isOpen])
 
   if (!isOpen || !config) return null
@@ -85,7 +90,28 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps): JSX.Elem
     if (ctxDirty) {
       await window.api.setMaxContextChars(maxCtx)
     }
+    await window.api.setUpdateFeedUrl(updateFeedUrl)
     onClose()
+  }
+
+  const checkUpdate = async (): Promise<void> => {
+    setCheckingUpdate(true)
+    setUpdateResult(null)
+    try {
+      const trimmed = updateFeedUrl.trim()
+      await window.api.setUpdateFeedUrl(trimmed)
+      const result = await window.api.checkForUpdates(trimmed)
+      setUpdateResult(result)
+    } catch (err) {
+      setUpdateResult({
+        currentVersion: '',
+        latestVersion: null,
+        hasUpdate: false,
+        error: err instanceof Error ? err.message : String(err)
+      })
+    } finally {
+      setCheckingUpdate(false)
+    }
   }
 
   const preset = PRESETS[config.provider]
@@ -230,6 +256,70 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps): JSX.Elem
               <p className={`settings-test${testResult.ok ? ' settings-test--ok' : ' settings-test--fail'}`}>
                 {testResult.message}
               </p>
+            )}
+          </section>
+
+          <section className="settings-section settings-section--split">
+            <h3 className="settings-section__title">应用更新</h3>
+
+            <div className="settings-field">
+              <label className="settings-field__label">发布源</label>
+              <input
+                className="settings-input"
+                type="text"
+                value={updateFeedUrl}
+                onChange={(e) => {
+                  setUpdateFeedUrl(e.target.value)
+                  setUpdateResult(null)
+                }}
+                placeholder="owner/repo 或 https://github.com/owner/repo"
+              />
+              <p className="settings-field__hint">
+                支持 GitHub 仓库地址、<code>owner/repo</code>，或 <code>https://api.github.com/repos/owner/repo/releases/latest</code>。
+                发布新版本时用 <code>v0.2.0</code> 这类 release tag。
+              </p>
+            </div>
+
+            <div className="settings-actions settings-actions--compact">
+              <button
+                className="settings-actions__btn"
+                onClick={() => void checkUpdate()}
+                disabled={checkingUpdate}
+              >
+                {checkingUpdate ? '检查中…' : '检查更新'}
+              </button>
+              {updateResult?.releaseUrl && (
+                <button
+                  className="settings-actions__btn settings-actions__btn--primary"
+                  onClick={() => void window.api.openUpdateUrl(updateResult.releaseUrl as string)}
+                >
+                  打开发布页
+                </button>
+              )}
+            </div>
+
+            {updateResult && (
+              <div className={`settings-update-result${updateResult.hasUpdate ? ' settings-update-result--new' : ''}${updateResult.error ? ' settings-update-result--fail' : ''}`}>
+                {updateResult.error ? (
+                  <div>检查失败：{updateResult.error === 'UPDATE_FEED_NOT_CONFIGURED' ? '请先填写发布源' : updateResult.error}</div>
+                ) : (
+                  <>
+                    <div className="settings-update-result__line">
+                      当前版本 <code>{updateResult.currentVersion}</code>
+                      {updateResult.latestVersion && <> · 最新版本 <code>{updateResult.latestVersion}</code></>}
+                    </div>
+                    <div className="settings-update-result__line">
+                      {updateResult.hasUpdate ? '发现新版本，可以前往发布页下载。' : '当前已经是最新版本。'}
+                    </div>
+                    {updateResult.releaseName && (
+                      <div className="settings-update-result__title">{updateResult.releaseName}</div>
+                    )}
+                    {updateResult.notes && (
+                      <pre className="settings-update-result__notes">{updateResult.notes}</pre>
+                    )}
+                  </>
+                )}
+              </div>
             )}
           </section>
         </div>

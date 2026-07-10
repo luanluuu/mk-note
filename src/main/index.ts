@@ -24,6 +24,7 @@ interface AppSettings {
   lastBounds?: WindowBounds
   maximized?: boolean
   aiConfig?: AiConfig
+  updateFeedUrl?: string
   projectPath?: string
   /** Max chars of user content fed to the model. Long-context models
    *  (deepseek-v3, qwen2.5-128k) can handle 32k-128k; small local models
@@ -37,6 +38,17 @@ interface AiConfig {
   baseUrl: string
   apiKey: string
   model: string
+}
+
+interface UpdateCheckResult {
+  currentVersion: string
+  latestVersion: string | null
+  hasUpdate: boolean
+  releaseName?: string
+  releaseUrl?: string
+  publishedAt?: string
+  notes?: string
+  error?: string
 }
 
 const DEFAULT_AI_CONFIG: AiConfig = {
@@ -92,6 +104,15 @@ function isInsideVault(notePath: string): boolean {
   if (!currentVault) return false
   const rel = relative(currentVault, resolve(notePath))
   return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel)
+}
+
+function isCurrentVault(vaultPath: string): boolean {
+  return !!currentVault && resolve(vaultPath) === currentVault
+}
+
+function assertCurrentVault(vaultPath: string): string {
+  if (!isCurrentVault(vaultPath)) throw new Error('PATH_OUTSIDE_VAULT')
+  return currentVault as string
 }
 
 async function listNotes(vaultPath: string): Promise<NoteMeta[]> {
@@ -236,6 +257,112 @@ async function toggleTheme(): Promise<void> {
   await setTheme(next)
 }
 
+// ---------- updates ----------
+
+async function getUpdateFeedUrl(): Promise<string> {
+  const settings = await readSettings()
+  return settings.updateFeedUrl ?? ''
+}
+
+async function setUpdateFeedUrl(updateFeedUrl: string): Promise<string> {
+  const settings = await readSettings()
+  settings.updateFeedUrl = updateFeedUrl.trim()
+  await writeSettings(settings)
+  return settings.updateFeedUrl
+}
+
+function normalizeVersion(version: string): number[] {
+  const clean = version.trim().replace(/^v/i, '').split(/[+-]/)[0]
+  return clean.split('.').map((part) => {
+    const n = Number.parseInt(part.replace(/\D.*$/, ''), 10)
+    return Number.isFinite(n) ? n : 0
+  })
+}
+
+function compareVersions(a: string, b: string): number {
+  const left = normalizeVersion(a)
+  const right = normalizeVersion(b)
+  const len = Math.max(left.length, right.length, 3)
+  for (let i = 0; i < len; i++) {
+    const diff = (left[i] ?? 0) - (right[i] ?? 0)
+    if (diff !== 0) return diff
+  }
+  return 0
+}
+
+function githubApiUrl(input: string): string | null {
+  const raw = input.trim()
+  if (!raw) return null
+  const shorthand = raw.match(/^([\w.-]+)\/([\w.-]+)$/)
+  if (shorthand) return `https://api.github.com/repos/${shorthand[1]}/${shorthand[2]}/releases/latest`
+
+  try {
+    const url = new URL(raw)
+    if (url.hostname === 'api.github.com' && /\/repos\/[^/]+\/[^/]+\/releases\/latest\/?$/.test(url.pathname)) {
+      return url.toString()
+    }
+    if (url.hostname === 'github.com') {
+      const [, owner, repo] = url.pathname.split('/')
+      if (owner && repo) return `https://api.github.com/repos/${owner}/${repo}/releases/latest`
+    }
+  } catch {
+    return null
+  }
+  return raw
+}
+
+async function checkForUpdates(feedUrl?: string): Promise<UpdateCheckResult> {
+  const currentVersion = app.getVersion()
+  const apiUrl = githubApiUrl(feedUrl ?? await getUpdateFeedUrl())
+  if (!apiUrl) {
+    return {
+      currentVersion,
+      latestVersion: null,
+      hasUpdate: false,
+      error: 'UPDATE_FEED_NOT_CONFIGURED'
+    }
+  }
+
+  try {
+    const res = await fetch(apiUrl, {
+      headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'Markdown-Notes' },
+      signal: AbortSignal.timeout(10000)
+    })
+    if (!res.ok) {
+      return {
+        currentVersion,
+        latestVersion: null,
+        hasUpdate: false,
+        error: `UPDATE_CHECK_FAILED (${res.status} ${res.statusText})`
+      }
+    }
+    const data = (await res.json()) as {
+      tag_name?: string
+      name?: string
+      html_url?: string
+      published_at?: string
+      body?: string
+    }
+    const latestVersion = data.tag_name ?? null
+    return {
+      currentVersion,
+      latestVersion,
+      hasUpdate: !!latestVersion && compareVersions(latestVersion, currentVersion) > 0,
+      releaseName: data.name,
+      releaseUrl: data.html_url,
+      publishedAt: data.published_at,
+      notes: data.body ? data.body.slice(0, 1200) : undefined
+    }
+  } catch (err) {
+    return {
+      currentVersion,
+      latestVersion: null,
+      hasUpdate: false,
+      error: err instanceof Error ? err.message : String(err)
+    }
+  }
+}
+
 // ---------- AI (Ollama or any OpenAI-compatible endpoint) ----------
 
 interface AiStatus {
@@ -323,18 +450,22 @@ async function aiComplete(
   messages: ChatMessageDto[],
   cfg: AiConfig,
   modelOverride?: string,
-  temperature = 0.4
+  temperature = 0.4,
+  signal?: AbortSignal
 ): Promise<string> {
   const model = modelOverride || cfg.model
   if (!model) throw new Error('AI_NO_MODEL')
   const base = normalizeBase(cfg.baseUrl)
+  const requestSignal = signal
+    ? AbortSignal.any([signal, AbortSignal.timeout(90000)])
+    : AbortSignal.timeout(90000)
 
   if (cfg.provider === 'ollama') {
     const res = await fetch(`${base}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ model, messages, stream: false, options: { temperature } }),
-      signal: AbortSignal.timeout(90000)
+      signal: requestSignal
     })
     if (!res.ok) throw new Error(`AI_FAILED (${res.status} ${res.statusText})`)
     const data = (await res.json()) as { message?: { content?: string } }
@@ -348,7 +479,7 @@ async function aiComplete(
       ...(cfg.apiKey ? { Authorization: `Bearer ${cfg.apiKey}` } : {})
     },
     body: JSON.stringify({ model, messages, temperature, stream: false }),
-    signal: AbortSignal.timeout(90000)
+    signal: requestSignal
   })
   if (!res.ok) {
     const detail = await res.text().catch(() => '')
@@ -1534,6 +1665,7 @@ async function readSse(
 
 // In-flight streaming requests, keyed by requestId — supports cancellation.
 const activeStreams = new Map<string, AbortController>()
+const activeAnalyses = new Map<string, AbortController>()
 
 // ---------- ipc ----------
 
@@ -1562,18 +1694,18 @@ function registerIpc(): void {
   })
 
   ipcMain.handle('vault:list', async (_event, vaultPath: string) => {
-    return listNotes(vaultPath)
+    return listNotes(assertCurrentVault(vaultPath))
   })
 
   ipcMain.handle('vault:search', async (_event, vaultPath: string, query: string, limit = 20) => {
-    return searchNotes(vaultPath, query.trim(), limit)
+    return searchNotes(assertCurrentVault(vaultPath), query.trim(), limit)
   })
 
   // Bulk-read every note in the vault so the renderer can build a semantic
   // embedding index in one pass (via transformers.js in a worker).
   ipcMain.handle('vault:readAll', async (_event, vaultPath: string) => {
-    if (!currentVault || resolve(vaultPath) !== currentVault) return []
-    const notes = await listNotes(vaultPath)
+    const vault = assertCurrentVault(vaultPath)
+    const notes = await listNotes(vault)
     const out: Array<{ path: string; title: string; content: string; mtime: number }> = []
     for (const n of notes) {
       try {
@@ -1587,8 +1719,7 @@ function registerIpc(): void {
   })
 
   ipcMain.handle('vault:watch', async (_event, vaultPath: string) => {
-    currentVault = resolve(vaultPath)
-    startVaultWatch(vaultPath)
+    startVaultWatch(assertCurrentVault(vaultPath))
   })
 
   ipcMain.handle('note:read', async (_event, notePath: string) => {
@@ -1606,16 +1737,14 @@ function registerIpc(): void {
   })
 
   ipcMain.handle('note:create', async (_event, vaultPath: string, name: string) => {
-    if (!currentVault || resolve(vaultPath) !== currentVault) {
-      throw new Error('PATH_OUTSIDE_VAULT')
-    }
+    const vault = assertCurrentVault(vaultPath)
     const base = sanitizeName(name)
     let filename = `${base}.md`
-    let full = join(vaultPath, filename)
+    let full = join(vault, filename)
     let i = 1
     while (await pathExists(full)) {
       filename = `${base} ${i}.md`
-      full = join(vaultPath, filename)
+      full = join(vault, filename)
       i++
     }
     await fs.writeFile(full, `# ${base}\n\n`, 'utf-8')
@@ -1665,6 +1794,21 @@ function registerIpc(): void {
     return theme
   })
 
+  // ---------- updates ----------
+  ipcMain.handle('update:feed:get', async () => getUpdateFeedUrl())
+  ipcMain.handle('update:feed:set', async (_event, updateFeedUrl: string) => setUpdateFeedUrl(updateFeedUrl))
+  ipcMain.handle('update:check', async (_event, updateFeedUrl?: string) => checkForUpdates(updateFeedUrl))
+  ipcMain.handle('update:open', async (_event, url: string) => {
+    try {
+      const parsed = new URL(url)
+      if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+        await shell.openExternal(url)
+      }
+    } catch {
+      // ignore invalid or unsupported external URLs
+    }
+  })
+
   // ---------- ai (configurable provider) ----------
   ipcMain.handle('ai:config:get', async () => getAiConfig())
   ipcMain.handle('ai:config:set', async (_event, config: AiConfig) => setAiConfig(config))
@@ -1689,22 +1833,33 @@ function registerIpc(): void {
   // Non-streaming (the JSON is short and needs to be complete before
   // rendering cards). Returns null if the model's output can't be parsed —
   // the renderer falls back to direct generation in that case.
-  ipcMain.handle('ai:analyze', async (_event, content: string, projectContext?: string, ragContext?: string) => {
+  ipcMain.handle('ai:analyze', async (_event, content: string, projectContext?: string, ragContext?: string, reqId?: string) => {
     const cfg = await getAiConfig()
     const maxChars = await getMaxContextChars()
     const sysPrompt = buildAnalysisPrompt(projectContext) + (ragContext ?? '')
-    const raw = await aiComplete(
-      [
-        { role: 'system', content: sysPrompt },
-        // Long-context models (128k) can analyze full tender documents;
-        // small local models should keep this low to avoid OOM. The limit
-        // is user-configurable in settings.
-        { role: 'user', content: content.slice(0, maxChars) }
-      ],
-      cfg,
-      undefined,
-      0.2
-    )
+    const ctrl = reqId ? new AbortController() : null
+    if (reqId && ctrl) activeAnalyses.set(reqId, ctrl)
+    let raw: string
+    try {
+      raw = await aiComplete(
+        [
+          { role: 'system', content: sysPrompt },
+          // Long-context models (128k) can analyze full tender documents;
+          // small local models should keep this low to avoid OOM. The limit
+          // is user-configurable in settings.
+          { role: 'user', content: content.slice(0, maxChars) }
+        ],
+        cfg,
+        undefined,
+        0.2,
+        ctrl?.signal
+      )
+    } catch (err) {
+      if (ctrl?.signal.aborted) return null
+      throw err
+    } finally {
+      if (reqId) activeAnalyses.delete(reqId)
+    }
     const result = parseAnalysis(raw)
     if (!result) {
       // Return a minimal valid result so the renderer can proceed to
@@ -1722,6 +1877,13 @@ function registerIpc(): void {
       }
     }
     return result
+  })
+  ipcMain.handle('ai:analyze:cancel', (_event, reqId: string) => {
+    const ctrl = activeAnalyses.get(reqId)
+    if (ctrl) {
+      ctrl.abort()
+      activeAnalyses.delete(reqId)
+    }
   })
 
   // Phase 3: Generate the final prompt. When `analysis` + `answers` are
@@ -2059,7 +2221,14 @@ async function createWindow(theme: Theme): Promise<void> {
   })
 
   win.webContents.setWindowOpenHandler((details) => {
-    shell.openExternal(details.url)
+    try {
+      const url = new URL(details.url)
+      if (url.protocol === 'http:' || url.protocol === 'https:') {
+        void shell.openExternal(details.url)
+      }
+    } catch {
+      // ignore invalid or unsupported external URLs
+    }
     return { action: 'deny' }
   })
 

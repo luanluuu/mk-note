@@ -52,6 +52,7 @@ function cosine(a: number[], b: number[]): number {
 export function useEmbeddings(vaultPath: string | null): UseEmbeddings {
   const workerRef = useRef<Worker | null>(null)
   const reqId = useRef(0)
+  const rebuildRunId = useRef(0)
   const pending = useRef<Map<number, { resolve: (v: number[][]) => void; reject: (e: Error) => void }>>(new Map())
   const indexRef = useRef<Map<string, IndexEntry>>(new Map())
   const [indexing, setIndexing] = useState(false)
@@ -126,12 +127,15 @@ export function useEmbeddings(vaultPath: string | null): UseEmbeddings {
   const rebuild = useCallback(
     async (vp: string) => {
       if (!workerRef.current) return
+      const runId = ++rebuildRunId.current
+      const isStale = (): boolean => runId !== rebuildRunId.current
       setIndexing(true)
       try {
         // Load any previously persisted index so we only re-embed changed notes.
         const stored = (await window.api.loadIndex()) as
           | { vaultPath?: string; entries?: IndexEntry[] }
           | null
+        if (isStale()) return
         if (stored?.vaultPath === vp && Array.isArray(stored.entries)) {
           indexRef.current = new Map(stored.entries.map((e) => [e.path, e]))
           setIndexedCount(indexRef.current.size)
@@ -141,6 +145,7 @@ export function useEmbeddings(vaultPath: string | null): UseEmbeddings {
         }
 
         const notes: NoteDoc[] = await window.api.readAllNotes(vp)
+        if (isStale()) return
         const stale = notes.filter((n) => {
           const prev = indexRef.current.get(n.path)
           return !prev || prev.mtime !== n.mtime
@@ -166,10 +171,12 @@ export function useEmbeddings(vaultPath: string | null): UseEmbeddings {
           try {
             embeddings = await embedBatch(texts)
           } catch (err) {
+            if (isStale()) return
             setStatus(`语义索引失败: ${err instanceof Error ? err.message : String(err)}`)
             setIndexing(false)
             return
           }
+          if (isStale()) return
           slice.forEach((n, j) => {
             const emb = embeddings[j]
             if (emb) indexRef.current.set(n.path, { path: n.path, title: n.title, mtime: n.mtime, embedding: emb })
@@ -187,11 +194,13 @@ export function useEmbeddings(vaultPath: string | null): UseEmbeddings {
         } catch {
           // persistence is best-effort; in-memory index still works
         }
+        if (isStale()) return
         setStatus(`已索引 ${indexRef.current.size} 篇`)
       } catch (err) {
+        if (isStale()) return
         setStatus(`索引失败: ${err instanceof Error ? err.message : String(err)}`)
       } finally {
-        setIndexing(false)
+        if (!isStale()) setIndexing(false)
       }
     },
     [embedBatch]
@@ -200,9 +209,11 @@ export function useEmbeddings(vaultPath: string | null): UseEmbeddings {
   // Rebuild whenever the vault changes, or when the fs watcher signals a change.
   useEffect(() => {
     if (!vaultPath) {
+      rebuildRunId.current++
       indexRef.current.clear()
       setIndexedCount(0)
       setStatus('未加载')
+      setIndexing(false)
       return
     }
     void rebuild(vaultPath)

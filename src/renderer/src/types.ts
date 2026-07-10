@@ -159,6 +159,17 @@ export interface SearchResult {
   snippet: string
 }
 
+export interface UpdateCheckResult {
+  currentVersion: string
+  latestVersion: string | null
+  hasUpdate: boolean
+  releaseName?: string
+  releaseUrl?: string
+  publishedAt?: string
+  notes?: string
+  error?: string
+}
+
 export interface Api {
   selectVault: () => Promise<string | null>
   getLastVault: () => Promise<string | null>
@@ -177,6 +188,11 @@ export interface Api {
   setTheme: (theme: Theme) => Promise<Theme>
   onThemeChanged: (cb: (theme: Theme) => void) => () => void
 
+  getUpdateFeedUrl: () => Promise<string>
+  setUpdateFeedUrl: (url: string) => Promise<string>
+  checkForUpdates: (url?: string) => Promise<UpdateCheckResult>
+  openUpdateUrl: (url: string) => Promise<void>
+
   getAiConfig: () => Promise<AiConfig>
   setAiConfig: (config: AiConfig) => Promise<AiConfig>
   aiStatus: () => Promise<AiStatus>
@@ -191,7 +207,8 @@ export interface Api {
   /** Phase 1: Analyze user input + project context → structured JSON.
    *  Returns null if the model output can't be parsed (renderer falls back
    *  to direct generation). */
-  aiAnalyze: (content: string, projectContext?: string, ragContext?: string) => Promise<AnalysisResult | null>
+  aiAnalyze: (content: string, projectContext?: string, ragContext?: string, reqId?: string) => Promise<AnalysisResult | null>
+  aiCancelAnalyze: (reqId: string) => Promise<void>
   /** Streaming version of aiStructure — calls onChunk with accumulated text
    *  as tokens arrive, then onDone/onError. Returns a cancel function.
    *  When `analysis` + `answers` are provided, uses the generation system

@@ -27,6 +27,21 @@ const api = {
     return () => ipcRenderer.removeListener('theme:changed', listener)
   },
 
+  // updates
+  getUpdateFeedUrl: (): Promise<string> => ipcRenderer.invoke('update:feed:get'),
+  setUpdateFeedUrl: (url: string): Promise<string> => ipcRenderer.invoke('update:feed:set', url),
+  checkForUpdates: (url?: string): Promise<{
+    currentVersion: string
+    latestVersion: string | null
+    hasUpdate: boolean
+    releaseName?: string
+    releaseUrl?: string
+    publishedAt?: string
+    notes?: string
+    error?: string
+  }> => ipcRenderer.invoke('update:check', url),
+  openUpdateUrl: (url: string): Promise<void> => ipcRenderer.invoke('update:open', url),
+
   // ai (configurable: Ollama or any OpenAI-compatible endpoint)
   getAiConfig: (): Promise<{ provider: 'ollama' | 'openai'; baseUrl: string; apiKey: string; model: string }> =>
     ipcRenderer.invoke('ai:config:get'),
@@ -47,8 +62,10 @@ const api = {
     ipcRenderer.invoke('ai:structure', content, projectContext, style),
   /** Phase 1: Analyze user input + project context → structured JSON.
    *  Optional ragContext carries semantically-retrieved note snippets. */
-  aiAnalyze: (content: string, projectContext?: string, ragContext?: string) =>
-    ipcRenderer.invoke('ai:analyze', content, projectContext, ragContext),
+  aiAnalyze: (content: string, projectContext?: string, ragContext?: string, reqId?: string) =>
+    ipcRenderer.invoke('ai:analyze', content, projectContext, ragContext, reqId),
+  aiCancelAnalyze: (reqId: string): Promise<void> =>
+    ipcRenderer.invoke('ai:analyze:cancel', reqId),
   /** Streaming version of aiStructure. Calls onChunk with the accumulated
    *  text as tokens arrive, then onDone (or onError). Returns a cancel
    *  function that aborts the in-flight request and removes listeners.
