@@ -40,11 +40,13 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps): JSX.Elem
   const [updateFeedUrl, setUpdateFeedUrl] = useState('')
   const [checkingUpdate, setCheckingUpdate] = useState(false)
   const [updateResult, setUpdateResult] = useState<UpdateCheckResult | null>(null)
+  const [modelSearch, setModelSearch] = useState('')
 
   useEffect(() => {
     if (!isOpen) return
     setTestResult(null)
     setModels([])
+    setModelSearch('')
     setCtxDirty(false)
     setUpdateResult(null)
     void window.api.getAiConfig().then((c) => setConfig(c))
@@ -115,6 +117,10 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps): JSX.Elem
   }
 
   const preset = PRESETS[config.provider]
+  const modelQuery = modelSearch.trim().toLowerCase()
+  const filteredModels = modelQuery
+    ? models.filter((m) => m.toLowerCase().includes(modelQuery))
+    : models
 
   return (
     <div className="settings-overlay" onClick={onClose}>
@@ -187,17 +193,35 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps): JSX.Elem
               />
               {models.length > 0 && (
                 <div className="settings-model-list">
-                  <span className="settings-model-list__label">服务端可用模型：</span>
-                  {models.map((m) => (
-                    <button
-                      key={m}
-                      type="button"
-                      className={`settings-model-chip${config.model === m ? ' settings-model-chip--active' : ''}`}
-                      onClick={() => update({ model: m })}
-                    >
-                      {m}
-                    </button>
-                  ))}
+                  <div className="settings-model-list__head">
+                    <span className="settings-model-list__label">服务端可用模型：{models.length} 个</span>
+                    {modelSearch && <span className="settings-model-list__count">匹配 {filteredModels.length} 个</span>}
+                  </div>
+                  {models.length > 8 && (
+                    <input
+                      className="settings-input settings-input--compact"
+                      type="search"
+                      value={modelSearch}
+                      onChange={(e) => setModelSearch(e.target.value)}
+                      placeholder="搜索模型，例如 qwen / gpt / reasoner"
+                    />
+                  )}
+                  <div className="settings-model-list__scroll">
+                    {filteredModels.length > 0 ? (
+                      filteredModels.map((m) => (
+                        <button
+                          key={m}
+                          type="button"
+                          className={`settings-model-chip${config.model === m ? ' settings-model-chip--active' : ''}`}
+                          onClick={() => update({ model: m })}
+                        >
+                          {m}
+                        </button>
+                      ))
+                    ) : (
+                      <span className="settings-model-list__empty">没有匹配的模型</span>
+                    )}
+                  </div>
                 </div>
               )}
               <p className="settings-field__hint">
@@ -263,7 +287,7 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps): JSX.Elem
             <h3 className="settings-section__title">应用更新</h3>
 
             <div className="settings-field">
-              <label className="settings-field__label">发布源</label>
+              <label className="settings-field__label">发布源（默认已配置）</label>
               <input
                 className="settings-input"
                 type="text"
@@ -272,10 +296,10 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps): JSX.Elem
                   setUpdateFeedUrl(e.target.value)
                   setUpdateResult(null)
                 }}
-                placeholder="owner/repo 或 https://github.com/owner/repo"
+                placeholder="luanluuu/mk-note"
               />
               <p className="settings-field__hint">
-                支持 GitHub 仓库地址、<code>owner/repo</code>，或 <code>https://api.github.com/repos/owner/repo/releases/latest</code>。
+                默认使用本项目的 GitHub Release。也支持 GitHub 仓库地址、<code>owner/repo</code>，或 <code>https://api.github.com/repos/owner/repo/releases/latest</code>。
                 发布新版本时用 <code>v0.2.0</code> 这类 release tag。
               </p>
             </div>

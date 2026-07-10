@@ -57,6 +57,7 @@ const DEFAULT_AI_CONFIG: AiConfig = {
   apiKey: '',
   model: 'qwen2.5:7b-instruct'
 }
+const DEFAULT_UPDATE_FEED_URL = 'luanluuu/mk-note'
 
 let mainWindow: BrowserWindow | null = null
 let currentVault: string | null = null
@@ -261,7 +262,7 @@ async function toggleTheme(): Promise<void> {
 
 async function getUpdateFeedUrl(): Promise<string> {
   const settings = await readSettings()
-  return settings.updateFeedUrl ?? ''
+  return settings.updateFeedUrl?.trim() || DEFAULT_UPDATE_FEED_URL
 }
 
 async function setUpdateFeedUrl(updateFeedUrl: string): Promise<string> {
@@ -313,7 +314,7 @@ function githubApiUrl(input: string): string | null {
 
 async function checkForUpdates(feedUrl?: string): Promise<UpdateCheckResult> {
   const currentVersion = app.getVersion()
-  const apiUrl = githubApiUrl(feedUrl ?? await getUpdateFeedUrl())
+  const apiUrl = githubApiUrl(feedUrl?.trim() || await getUpdateFeedUrl())
   if (!apiUrl) {
     return {
       currentVersion,

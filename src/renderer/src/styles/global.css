@@ -133,6 +133,32 @@ body {
   overflow: hidden;
 }
 
+.settings-fab {
+  position: fixed;
+  right: 22px;
+  bottom: 22px;
+  z-index: 20;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  border: 3px solid var(--black);
+  background: var(--yellow);
+  color: var(--black);
+  cursor: pointer;
+  box-shadow: var(--shadow-hard);
+  transition: background 0.12s var(--ease), color 0.12s var(--ease), transform 0.12s var(--ease);
+}
+.settings-fab:hover {
+  background: var(--blue);
+  color: #fff;
+}
+.settings-fab:active {
+  transform: translate(2px, 2px);
+  box-shadow: 3px 3px 0 rgba(26, 26, 26, 0.16);
+}
+
 /* ================================================================
    SIDEBAR — white block with a red brand header
    ================================================================ */
@@ -1547,15 +1573,36 @@ body {
   border: 2px solid var(--black);
   background: var(--surface-2);
 }
+.settings-model-list__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
 .settings-model-list__label {
-  display: block;
   font-size: 11px;
   color: var(--ink-faint);
-  margin-bottom: 8px;
+}
+.settings-model-list__count,
+.settings-model-list__empty {
+  font-size: 11px;
+  color: var(--ink-faint);
+}
+.settings-model-list__scroll {
+  max-height: 180px;
+  overflow-y: auto;
+  margin-top: 8px;
+  padding-right: 4px;
+}
+.settings-model-list__empty {
+  display: block;
+  padding: 8px 0;
 }
 .settings-field__radios {
   display: flex;
   gap: 16px;
+  flex-wrap: wrap;
 }
 .settings-radio {
   display: inline-flex;
@@ -1580,6 +1627,10 @@ body {
 }
 .settings-input:focus {
   background: var(--yellow);
+}
+.settings-input--compact {
+  padding: 6px 9px;
+  font-size: 12px;
 }
 
 .settings-actions {
